@@ -47,8 +47,17 @@ def test_db_page_shows_backend_and_table():
     assert not at.exception
     # Either a success (PostgreSQL) or warning (SQLite fallback) banner is shown.
     assert at.success or at.warning
-    # The live sales table is rendered.
+    # Schema + live sales table are rendered (across the tabs).
     assert len(at.dataframe) >= 1
+
+
+def test_db_page_sql_playground_runs():
+    at = _run("pages/1_Database_Basics.py")
+    assert not at.exception
+    run_buttons = [b for b in at.button if b.label == "▶️ Run query"]
+    assert run_buttons, "SQL playground run button not found"
+    run_buttons[0].click().run()
+    assert not at.exception, f"SQL playground raised: {[str(e) for e in at.exception]}"
 
 
 def test_parallel_page_benchmark_runs():
