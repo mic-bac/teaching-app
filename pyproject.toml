@@ -1,0 +1,23 @@
+[project]
+name = "teaching-app"
+version = "0.1.0"
+description = "A multi-page Streamlit teaching app unifying the sibling lesson repos (databases, parallelization, ...)."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "streamlit>=1.30",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "SQLAlchemy>=2.0",
+    "psycopg2-binary>=2.9",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.uv]
+# This is an application, not an importable/distributable package: skip building
+# it. Local imports (Home.py, pages/, utils/) resolve via the working directory.
+package = false
