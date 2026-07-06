@@ -1,0 +1,32 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.env
+.venv/
+venv/
+
+# --- App data / local DB ---
+data/fallback.db
+data/*.sqlite
+data/*.db
+
+# --- Large generated datasets (never commit the 184 MB CSV) ---
+*.csv
+
+# --- Independent "microservice" repos, consumed by the app but tracked separately ---
+# Each has its own .git and stands alone; the app reads/summarizes/visualizes them.
+# Add any new sibling teaching repo here.
+/object-detection/
+/parallelization/
+/postgresql/
+/predictions/
+/recommender/
+/segmentation/
+
+# --- R ---
+.RData
+.Rhistory
+
+# --- OS ---
+.DS_Store
