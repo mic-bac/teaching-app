@@ -48,7 +48,7 @@ standalone.
 
 | Repo | Python | Env state |
 |------|--------|-----------|
-| app (this repo) | 3.13 | synced ✅ (30 tests pass) |
+| app (this repo) | 3.13 | synced ✅ (38 tests pass) |
 | `segmentation` | 3.13 | synced ✅ |
 | `parallelization` | 3.13 | synced ✅ (R excluded) |
 | `object-detection` | 3.13 | locked (run `uv sync` — large torch install) |

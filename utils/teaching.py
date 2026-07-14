@@ -10,6 +10,7 @@ and do the actual ``st.*`` rendering themselves.
 """
 
 import inspect
+import re
 from pathlib import Path
 
 
@@ -20,6 +21,51 @@ def source_of(obj) -> str:
     a learner sees can never drift out of sync with what really runs.
     """
     return inspect.getsource(obj)
+
+
+_SECTION_RE = re.compile(r"^#\s*---\s*(\d+)\.\s*(.+?)\s*---\s*$")
+
+
+def split_script_blocks(source: str) -> list[dict]:
+    """Split a ``parallel.*`` script into ordered sections by its step markers.
+
+    Both ``parallel/parallel.py`` and ``parallel/parallel.R`` annotate each step
+    with a matching ``# --- N. Title ---`` comment. This extracts the code under
+    each marker so the two languages can be shown block-by-block, side by side,
+    with equivalent steps lined up.
+
+    A section's code runs from just after its marker to the next section marker
+    or notebook cell boundary (a ``# %%`` line in the Python file), with the
+    surrounding blank lines trimmed. Returns a list of
+    ``{"number": int, "title": str, "code": str}`` dicts in file order.
+    """
+    lines = source.splitlines()
+    markers = [(i, m) for i, line in enumerate(lines) if (m := _SECTION_RE.match(line))]
+
+    blocks = []
+    for idx, (line_no, match) in enumerate(markers):
+        start = line_no + 1
+        end = markers[idx + 1][0] if idx + 1 < len(markers) else len(lines)
+
+        body = []
+        for line in lines[start:end]:
+            if line.lstrip().startswith("# %%"):
+                break  # a notebook cell boundary ends this section's code
+            body.append(line)
+
+        while body and not body[0].strip():
+            body.pop(0)
+        while body and not body[-1].strip():
+            body.pop()
+
+        blocks.append(
+            {
+                "number": int(match.group(1)),
+                "title": match.group(2).strip(),
+                "code": "\n".join(body),
+            }
+        )
+    return blocks
 
 
 def postgres_docker_command(readme_path: Path | None = None) -> str:

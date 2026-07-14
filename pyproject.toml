@@ -10,6 +10,8 @@ dependencies = [
     "numpy>=1.24",
     "SQLAlchemy>=2.0",
     "psycopg2-binary>=2.9",
+    "aiohttp>=3.14.1",
+    "requests>=2.34.2",
 ]
 
 [dependency-groups]

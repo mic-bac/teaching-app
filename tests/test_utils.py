@@ -5,13 +5,17 @@ running Streamlit server. The DB tests use a temporary SQLite file so they are
 fully deterministic and never depend on Docker/PostgreSQL.
 """
 
+import http.server
+import threading
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
+import requests
 from sqlalchemy import create_engine
 
-from utils import data_generator, compute_utils, db_utils, teaching
+from utils import data_generator, compute_utils, db_utils, io_utils, teaching
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +242,46 @@ def test_source_of_returns_code():
     assert "def fetch_sales" in src
 
 
+def test_split_script_blocks_python_notebook():
+    source = (
+        "# %%\n"
+        "# --- 1. Imports ---\n"
+        "import numpy as np\n"
+        "\n"
+        "# %% [markdown]\n"
+        "# ## Narrative that must not leak into a code block\n"
+        "\n"
+        "# %%\n"
+        "# --- 2. Serial ---\n"
+        "results = [f(row) for row in data]\n"
+    )
+    blocks = teaching.split_script_blocks(source)
+    assert [b["number"] for b in blocks] == [1, 2]
+    assert blocks[0]["title"] == "Imports"
+    # Cell boundary (# %%) stops the block: the markdown narrative is excluded.
+    assert blocks[0]["code"] == "import numpy as np"
+    assert "Narrative" not in blocks[0]["code"]
+    assert blocks[1]["code"] == "results = [f(row) for row in data]"
+
+
+def test_split_script_blocks_real_scripts_align():
+    root = Path(__file__).resolve().parents[1]
+    py_blocks = teaching.split_script_blocks(
+        (root / "parallelization" / "parallel" / "parallel.py").read_text()
+    )
+    r_blocks = teaching.split_script_blocks(
+        (root / "parallelization" / "parallel" / "parallel.R").read_text()
+    )
+    py_nums = {b["number"] for b in py_blocks}
+    r_nums = {b["number"] for b in r_blocks}
+    # The two languages share the numbered steps 1..7 so they can be paired.
+    assert {1, 2, 3, 4, 5, 6, 7} <= (py_nums & r_nums)
+    # Real code made it into the parsed blocks.
+    py_by_num = {b["number"]: b["code"] for b in py_blocks}
+    assert "Pool" in py_by_num[6]
+    assert "np.mean" in py_by_num[7]
+
+
 def test_postgres_docker_command_from_repo():
     cmd = teaching.postgres_docker_command()
     assert "docker run" in cmd
@@ -257,3 +301,71 @@ def test_architecture_dot_highlights_active_backend():
     # The highlighted backend gets a thicker border (penwidth=3).
     assert "penwidth=3" in pg and "penwidth=3" in sqlite
     assert pg != sqlite
+
+
+# ---------------------------------------------------------------------------
+# io_utils
+#
+# These exercise the *real* download paths (requests, aiohttp, multiprocessing)
+# against a throwaway HTTP server bound to localhost, so the tests are fully
+# deterministic and never touch the public internet.
+# ---------------------------------------------------------------------------
+class _QuietHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"hello world"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):  # silence per-request logging
+        pass
+
+
+@pytest.fixture(scope="module")
+def local_url():
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _QuietHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    _, port = server.server_address
+    try:
+        yield f"http://127.0.0.1:{port}/"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_run_sequential_downloads(local_url):
+    results, elapsed = io_utils.run_sequential([local_url] * 5)
+    assert len(results) == 5
+    assert all(r > 0 for r in results)  # real bytes were read back
+    assert elapsed >= 0
+
+
+def test_run_threaded_downloads(local_url):
+    results, elapsed = io_utils.run_threaded([local_url] * 5)
+    assert len(results) == 5
+    assert all(r > 0 for r in results)
+    assert elapsed >= 0
+
+
+def test_run_async_downloads(local_url):
+    results, elapsed = io_utils.run_async([local_url] * 5)
+    assert len(results) == 5
+    assert all(r > 0 for r in results)
+    assert elapsed >= 0
+
+
+def test_download_site_unreachable_returns_zero():
+    # Graceful degradation: a dead endpoint yields 0 bytes instead of raising,
+    # so a flaky network can never crash the live demo.
+    with requests.Session() as session:
+        assert io_utils.download_site(session, "http://127.0.0.1:1/") == 0
+
+
+def test_run_io_benchmark_keys_and_types(local_url):
+    res = io_utils.run_io_benchmark(local_url, count=5)
+    assert set(res.keys()) == {"Sequential", "Threaded", "Async", "Multiprocessing"}
+    assert all(isinstance(v, float) for v in res.values())
+    assert all(v >= 0 for v in res.values())

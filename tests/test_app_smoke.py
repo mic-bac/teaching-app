@@ -64,9 +64,33 @@ def test_parallel_page_benchmark_runs():
     at = AppTest.from_file(str(ROOT / "pages/2_Parallelization.py"), default_timeout=120)
     at.run()
     assert not at.exception
-    # Keep the run cheap: smallest dataset size, then click the race button.
-    at.slider[0].set_value(1000).run()
-    at.button[0].click().run()
+    # Tabs mean several sliders/buttons exist, so select by label rather than index.
+    cpu_sliders = [s for s in at.slider if s.label == "Dataset size (rows)"]
+    assert cpu_sliders, "CPU benchmark slider not found"
+    cpu_sliders[0].set_value(1000).run()
+    race_buttons = [b for b in at.button if b.label == "🏁 Start Benchmark Race"]
+    assert race_buttons, "CPU benchmark button not found"
+    race_buttons[0].click().run()
     assert not at.exception, f"benchmark raised: {[str(e) for e in at.exception]}"
     # After running, the results include per-approach metrics.
     assert len(at.metric) >= 3
+
+
+def test_parallel_page_io_race_runs():
+    at = AppTest.from_file(str(ROOT / "pages/2_Parallelization.py"), default_timeout=120)
+    at.run()
+    assert not at.exception
+    # Keep it cheap and offline-safe: a handful of requests to an unreachable host.
+    # download_site swallows per-request errors, so the race must not raise.
+    urls = [i for i in at.text_input if i.label == "URL to download"]
+    assert urls, "I/O URL input not found"
+    urls[0].set_value("http://127.0.0.1:1/").run()
+    counts = [s for s in at.slider if s.label == "Number of requests"]
+    assert counts, "I/O request-count slider not found"
+    counts[0].set_value(10).run()
+    io_buttons = [b for b in at.button if b.label == "🏁 Start Download Race"]
+    assert io_buttons, "I/O race button not found"
+    io_buttons[0].click().run()
+    assert not at.exception, f"I/O race raised: {[str(e) for e in at.exception]}"
+    # Four approaches → four metrics in the I/O results.
+    assert len(at.metric) >= 4
