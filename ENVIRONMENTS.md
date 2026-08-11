@@ -48,9 +48,9 @@ standalone.
 
 | Repo | Python | Env state |
 |------|--------|-----------|
-| app (this repo) | 3.13 | synced ✅ (38 tests pass) |
+| app (this repo) | 3.13 | synced ✅ (51 tests pass) |
 | `segmentation` | 3.13 | synced ✅ |
 | `parallelization` | 3.13 | synced ✅ (R excluded) |
 | `object-detection` | 3.13 | locked (run `uv sync` — large torch install) |
 | `predictions` | 3.13 | locked (run `uv sync` — builds `scikit-survival`/`prophet`) |
-| `recommender` | 3.13 | locked (run `uv sync` — builds `scikit-surprise`, verified to compile on 3.13) |
+| `recommender` | 3.13 | synced ✅ (pure-Python: pandas/scikit-learn/mlxtend/plotly; surfaced as the Recommender page) |

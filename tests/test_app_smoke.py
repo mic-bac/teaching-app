@@ -20,6 +20,7 @@ PAGES = [
     "Home.py",
     "pages/1_Database_Basics.py",
     "pages/2_Parallelization.py",
+    "pages/3_Recommender.py",
 ]
 
 
@@ -94,3 +95,31 @@ def test_parallel_page_io_race_runs():
     assert not at.exception, f"I/O race raised: {[str(e) for e in at.exception]}"
     # Four approaches → four metrics in the I/O results.
     assert len(at.metric) >= 4
+
+
+def test_recommender_page_content_based_selectbox():
+    at = AppTest.from_file(str(ROOT / "pages/3_Recommender.py"), default_timeout=180)
+    at.run()
+    assert not at.exception, f"recommender load raised: {[str(e) for e in at.exception]}"
+    # Pick a movie in the Content-Based tab and confirm it still renders cleanly.
+    movie_boxes = [s for s in at.selectbox if s.label == "Pick a movie you liked"]
+    assert movie_boxes, "content-based movie selectbox not found"
+    movie_boxes[0].set_value("Jumanji (1995)").run()
+    assert not at.exception
+    assert len(at.dataframe) >= 1  # a recommendations table is shown
+
+
+def test_recommender_page_matrix_factorization_trains():
+    at = AppTest.from_file(str(ROOT / "pages/3_Recommender.py"), default_timeout=180)
+    at.run()
+    assert not at.exception
+    # Train the MF model at the cheapest setting (min epochs) and confirm it
+    # completes and reports a test-RMSE metric.
+    epoch_sliders = [s for s in at.slider if s.label == "Training epochs"]
+    assert epoch_sliders, "MF epochs slider not found"
+    epoch_sliders[0].set_value(5).run()
+    train_buttons = [b for b in at.button if b.label == "🚀 Train the model"]
+    assert train_buttons, "MF train button not found"
+    train_buttons[0].click().run()
+    assert not at.exception, f"MF training raised: {[str(e) for e in at.exception]}"
+    assert any("MF test RMSE" in m.label for m in at.metric)

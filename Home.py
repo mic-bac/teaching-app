@@ -15,12 +15,13 @@ st.set_page_config(page_title="Teaching App", layout="wide", page_icon="🎓")
 st.title("🎓 Welcome to the Teaching App")
 st.markdown(
     """
-    This is a hands-on **educational app** that brings two lessons together in
-    one place. Explore each topic interactively, run the examples, and see the
+    This is a hands-on **educational app** that brings several lessons together
+    in one place. Explore each topic interactively, run the examples, and see the
     concepts come to life:
 
     - 🗄️ **Database Basics** — working with PostgreSQL running in Docker.
     - ⚡ **Parallelization** — comparing Serial vs Parallel vs Vectorized computation.
+    - 🎯 **Recommender Systems** — content-based, collaborative, and association-rule recommenders.
 
     Pick a lesson below to get started.
     """
@@ -30,7 +31,7 @@ st.divider()
 
 st.subheader("Choose a lesson")
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     with st.container(border=True):
@@ -56,6 +57,19 @@ with col2:
             "pages/2_Parallelization.py",
             label="Open Parallelization",
             icon="⚡",
+        )
+
+with col3:
+    with st.container(border=True):
+        st.markdown("### 🎯 Recommender Systems")
+        st.write(
+            "Explore how Netflix- and Amazon-style recommenders work: content-based "
+            "filtering, collaborative filtering, and market-basket association rules."
+        )
+        st.page_link(
+            "pages/3_Recommender.py",
+            label="Open Recommender Systems",
+            icon="🎯",
         )
 
 st.divider()

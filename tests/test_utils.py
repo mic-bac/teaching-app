@@ -16,6 +16,7 @@ import requests
 from sqlalchemy import create_engine
 
 from utils import data_generator, compute_utils, db_utils, io_utils, teaching
+from utils import recommender_utils
 
 
 # ---------------------------------------------------------------------------
@@ -369,3 +370,142 @@ def test_run_io_benchmark_keys_and_types(local_url):
     assert set(res.keys()) == {"Sequential", "Threaded", "Async", "Multiprocessing"}
     assert all(isinstance(v, float) for v in res.values())
     assert all(v >= 0 for v in res.values())
+
+
+# ---------------------------------------------------------------------------
+# recommender_utils — deterministic tests on tiny in-memory fixtures
+# ---------------------------------------------------------------------------
+# Content-Based Filtering
+def _tiny_movies():
+    # Genres are already space-joined (as build_tfidf expects).
+    return pd.DataFrame(
+        {
+            "movieId": [1, 2, 3, 4],
+            "title": ["A", "B", "C", "D"],
+            "genres": ["Action Adventure", "Action Adventure", "Comedy Romance", "Comedy"],
+        }
+    )
+
+
+def test_cbf_recommendations_exclude_input_and_rank_similar():
+    movies = _tiny_movies()
+    _, tfidf, title_to_idx = recommender_utils.build_tfidf(movies)
+    recs = recommender_utils.get_recommendations("A", tfidf, movies, title_to_idx, top_n=10)
+    titles = list(recs["title"])
+    assert "A" not in titles  # never recommend the input itself
+    assert len(titles) == 3  # only three other movies exist
+    # "B" shares both genres with "A", so it must rank first.
+    assert titles[0] == "B"
+    assert recs["similarity"].iloc[0] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_cbf_unknown_title_returns_message():
+    movies = _tiny_movies()
+    _, tfidf, title_to_idx = recommender_utils.build_tfidf(movies)
+    out = recommender_utils.get_recommendations("Nope", tfidf, movies, title_to_idx)
+    assert isinstance(out, str) and "not found" in out
+
+
+def test_cbf_intra_list_similarity_range():
+    movies = _tiny_movies()
+    _, tfidf, title_to_idx = recommender_utils.build_tfidf(movies)
+    ils = recommender_utils.intra_list_similarity(["A", "B"], tfidf, title_to_idx)
+    # A and B are identical in genre space → similarity 1.0.
+    assert ils == pytest.approx(1.0, abs=1e-6)
+    assert recommender_utils.intra_list_similarity(["A"], tfidf, title_to_idx) == 0.0
+
+
+# Neighborhood collaborative filtering
+def test_user_based_recommendations_are_weighted_and_exclude_seen():
+    user_item = pd.DataFrame(
+        {"M1": [5.0, 4.0, np.nan], "M2": [np.nan, 5.0, 1.0], "M3": [1.0, np.nan, 5.0]},
+        index=[1, 2, 3],
+    )
+    user_sim = recommender_utils.user_similarity(user_item)
+    recs = recommender_utils.get_user_based_recommendations(1, user_item, user_sim)
+    # User 1 has already rated M1 and M3, so only M2 can be recommended.
+    assert "M2" in recs.index
+    assert "M1" not in recs.index and "M3" not in recs.index
+
+
+def test_item_based_recommendations_on_demand():
+    user_item = pd.DataFrame(
+        {"M1": [5.0, 4.0, np.nan], "M2": [5.0, 4.0, np.nan], "M3": [1.0, np.nan, 5.0]},
+        index=[1, 2, 3],
+    )
+    sparse, labels = recommender_utils.build_item_user_sparse(user_item)
+    recs = recommender_utils.get_item_based_recommendations("M1", sparse, labels)
+    # M2 is co-rated identically to M1 → most similar; M1 itself is excluded.
+    assert recs.index[0] == "M2"
+    assert "M1" not in recs.index
+
+
+# Matrix completion: bias baseline + factorization
+def test_fit_baseline_learns_item_bias_direction():
+    # Item 0 is always loved (5), item 1 always panned (1) by all users.
+    rows = []
+    for u in range(5):
+        rows.append([u, 0, 5.0])
+        rows.append([u, 1, 1.0])
+    ratings = np.array(rows, dtype=float)
+    mu, b_u, b_i = recommender_utils.fit_baseline(ratings, n_users=5, n_items=2)
+    assert b_i[0] > b_i[1]  # loved item has higher bias than panned one
+    preds = recommender_utils.predict_baseline(mu, b_u, b_i, [0], [0])
+    assert 0.5 <= preds[0] <= 5.0  # clipped to the valid range
+
+
+def test_matrix_factorization_reduces_training_error():
+    # Structured data: rating depends on a user offset + an item offset.
+    rng = np.random.default_rng(0)
+    u_off = rng.uniform(-1, 1, 8)
+    i_off = rng.uniform(-1, 1, 8)
+    rows = [[u, i, float(np.clip(3 + u_off[u] + i_off[i], 0.5, 5.0))]
+            for u in range(8) for i in range(8)]
+    ratings = np.array(rows, dtype=float)
+
+    model = recommender_utils.MatrixFactorization(8, 8, n_factors=3, n_epochs=15)
+    history = []
+    model.fit(ratings, on_epoch_end=lambda e, r: history.append(r))
+    assert history[-1] < history[0]  # SGD lowers the training RMSE
+    preds = model.predict(ratings[:, 0], ratings[:, 1])
+    assert np.all((preds >= 0.5) & (preds <= 5.0))
+
+
+# Association rules
+def _tiny_groceries():
+    # Members 1-4 buy milk+bread together; member 5 buys soda alone.
+    return pd.DataFrame(
+        {
+            "Member_number": [1, 1, 2, 2, 3, 3, 4, 4, 5],
+            "Date": ["d"] * 9,
+            "itemDescription": ["milk", "bread", "milk", "bread",
+                                 "milk", "bread", "milk", "bread", "soda"],
+        }
+    )
+
+
+def test_association_rules_and_basket_recommendation():
+    trans = recommender_utils.build_transactions(_tiny_groceries())
+    assert trans.shape[0] == 5  # five baskets
+    itemsets = recommender_utils.run_apriori(trans, min_support=0.1)
+    rules = recommender_utils.make_rules(itemsets, min_confidence=0.5)
+    # milk -> bread is a certainty here.
+    assert (rules["rule_str"] == "milk → bread").any()
+
+    recs = recommender_utils.get_basket_recommendations("milk", rules)
+    assert "bread" in list(recs["recommendation"])
+
+
+def test_basket_recommendation_unknown_item():
+    trans = recommender_utils.build_transactions(_tiny_groceries())
+    rules = recommender_utils.make_rules(
+        recommender_utils.run_apriori(trans, min_support=0.1), min_confidence=0.5
+    )
+    out = recommender_utils.get_basket_recommendations("caviar", rules)
+    assert isinstance(out, str) and "No rules" in out
+
+
+def test_taxonomy_dot_is_graphviz():
+    dot = recommender_utils.taxonomy_dot()
+    assert dot.startswith("digraph")
+    assert "Collaborative" in dot and "Content-Based" in dot
