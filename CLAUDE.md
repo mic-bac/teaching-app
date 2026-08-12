@@ -51,8 +51,12 @@ teaching-app/            ← this repo (Streamlit orchestrator; git repo, branch
 | `pages/6_Segmentation.py` | `segmentation/` (rfm, cltv, clustering) | ✅ built |
 | object-detection | respective repo | 🔜 **will become its own `pages/N_*.py`** |
 
-`predictions/timeseries.py` (Prophet/XGBoost sales forecasting) is a third topic in that
-sibling repo and is **not** yet surfaced — it belongs to a different lecture block.
+`predictions/timeseries.py` (analysing a series + classical models) and
+`predictions/forecasting.py` (Prophet/XGBoost) are a third topic in that sibling repo and
+are **not** yet surfaced — they belong to a different lecture block. Unlike the two churn
+scripts, their logic lives in importable modules (`predictions/src/{sales_data,ts_core,
+forecast_models,control_series}.py`), so a future page can **import** the sibling like
+`segmentation_utils.py` does rather than re-implement it.
 
 ## Environments & tooling
 
@@ -83,7 +87,8 @@ sibling repo and is **not** yet surfaced — it belongs to a different lecture b
   `segmentation_utils.py` (RFM, cohort-measured CLTV, clustering).
 
 - **Two ways a util relates to its sibling.** Most *re-implement* the sibling's logic, because
-  `predictions/*.py` are `# %%` scripts with top-level side effects and cannot be imported.
+  `predictions/{propensity,survival}.py` are `# %%` scripts with top-level side effects and
+  cannot be imported (the newer `predictions/src/*` modules are pure, and should be imported).
   `segmentation_utils.py` instead **imports** `segmentation/src/*` directly — those modules are
   already pure and importable, so copying them would duplicate the source of truth and
   guarantee drift. Prefer importing whenever a sibling exposes a clean `src/`; re-implement

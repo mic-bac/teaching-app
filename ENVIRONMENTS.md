@@ -52,5 +52,5 @@ standalone.
 | `segmentation` | 3.13 | synced ✅ (`openpyxl` for the one-time `fetch_data.py`; surfaced as the Segmentation page, whose `src/` modules the app imports directly) |
 | `parallelization` | 3.13 | synced ✅ (R excluded) |
 | `object-detection` | 3.13 | locked (run `uv sync` — large torch install) |
-| `predictions` | 3.13 | synced ✅ (`scikit-survival`/`xgboost` ship wheels; `prophet` builds — only needed for `timeseries.py`; surfaced as the Propensity + Survival pages) |
+| `predictions` | 3.13 | synced ✅ (`scikit-survival`/`xgboost` ship wheels; `prophet` builds — only needed for `timeseries.py`/`forecasting.py`; surfaced as the Propensity + Survival pages) |
 | `recommender` | 3.13 | synced ✅ (pure-Python: pandas/scikit-learn/mlxtend/plotly; surfaced as the Recommender page) |
