@@ -45,7 +45,14 @@ teaching-app/            ← this repo (Streamlit orchestrator; git repo, branch
 |------|-------------|--------|
 | `pages/1_Database_Basics.py` | `postgresql/` | ✅ built |
 | `pages/2_Parallelization.py` | `parallelization/` | ✅ built |
-| object-detection / predictions / recommender / segmentation | respective repo | 🔜 **each will become its own `pages/N_*.py`** |
+| `pages/3_Recommender.py` | `recommender/` | ✅ built |
+| `pages/4_Propensity.py` | `predictions/propensity.py` | ✅ built |
+| `pages/5_Survival.py` | `predictions/survival.py` | ✅ built |
+| `pages/6_Segmentation.py` | `segmentation/` (rfm, cltv, clustering) | ✅ built |
+| object-detection | respective repo | 🔜 **will become its own `pages/N_*.py`** |
+
+`predictions/timeseries.py` (Prophet/XGBoost sales forecasting) is a third topic in that
+sibling repo and is **not** yet surfaced — it belongs to a different lecture block.
 
 ## Environments & tooling
 
@@ -70,7 +77,17 @@ teaching-app/            ← this repo (Streamlit orchestrator; git repo, branch
 - Existing utils: `data_generator.py` (`@st.cache_data`), `db_utils.py` (SQLAlchemy Core,
   Postgres→SQLite), `compute_utils.py` (serial/parallel/vectorized; `expensive_row_op` must
   stay **module-top-level** so `multiprocessing` can pickle it), `teaching.py` (`source_of`,
-  `postgres_docker_command`, `architecture_dot`).
+  `postgres_docker_command`, `architecture_dot`), `io_utils.py`, `recommender_utils.py`,
+  `propensity_utils.py` (churn classification; its `load_churn` synthetic fallback is shared
+  with), `survival_utils.py` (Kaplan-Meier, Cox/RSF/SVM, censoring-aware metrics),
+  `segmentation_utils.py` (RFM, cohort-measured CLTV, clustering).
+
+- **Two ways a util relates to its sibling.** Most *re-implement* the sibling's logic, because
+  `predictions/*.py` are `# %%` scripts with top-level side effects and cannot be imported.
+  `segmentation_utils.py` instead **imports** `segmentation/src/*` directly — those modules are
+  already pure and importable, so copying them would duplicate the source of truth and
+  guarantee drift. Prefer importing whenever a sibling exposes a clean `src/`; re-implement
+  only when the sibling is a side-effecting script. Either way the util stays Streamlit-free.
 
 ### Teaching patterns to reuse (this is what makes it a *teaching* app)
 
@@ -88,7 +105,7 @@ teaching-app/            ← this repo (Streamlit orchestrator; git repo, branch
 
 ## Testing (required for every change)
 
-- Run with `make test` / `uv run pytest`. Currently 30 tests, all must stay green.
+- Run with `make test` / `uv run pytest`. Currently 84 tests, all must stay green.
 - **`tests/test_utils.py`** — unit-test every `utils/` helper. Keep them **deterministic**:
   DB tests use a temp **SQLite** file (`create_engine(f"sqlite:///{tmp}")`), never Docker.
 - **`tests/test_app_smoke.py`** — drive each page with `streamlit.testing.v1.AppTest` and

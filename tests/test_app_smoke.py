@@ -21,6 +21,9 @@ PAGES = [
     "pages/1_Database_Basics.py",
     "pages/2_Parallelization.py",
     "pages/3_Recommender.py",
+    "pages/4_Propensity.py",
+    "pages/5_Survival.py",
+    "pages/6_Segmentation.py",
 ]
 
 
@@ -123,3 +126,111 @@ def test_recommender_page_matrix_factorization_trains():
     train_buttons[0].click().run()
     assert not at.exception, f"MF training raised: {[str(e) for e in at.exception]}"
     assert any("MF test RMSE" in m.label for m in at.metric)
+
+
+def test_propensity_page_fits_a_model_at_the_smallest_sample():
+    at = AppTest.from_file(str(ROOT / "pages/4_Propensity.py"), default_timeout=180)
+    at.run()
+    assert not at.exception, f"propensity load raised: {[str(e) for e in at.exception]}"
+    # Shrink the sample first so every refit below stays cheap.
+    sample = [s for s in at.select_slider if s.label == "Customers to model"]
+    assert sample, "sample-size control not found"
+    sample[0].set_value(2000).run()
+    assert not at.exception
+    # The Models tab fits on load, so the metric row must already be there.
+    assert any(m.label == "ROC-AUC" for m in at.metric)
+    # The page states which data it is running on: the real CSVs or the fallback.
+    banners = list(at.success) + list(at.warning)
+    assert any("Kaggle churn dataset" in b.value or "synthetic" in b.value for b in banners)
+
+
+def test_propensity_page_cross_validation_and_tuning_run():
+    at = AppTest.from_file(str(ROOT / "pages/4_Propensity.py"), default_timeout=300)
+    at.run()
+    sample = [s for s in at.select_slider if s.label == "Customers to model"]
+    sample[0].set_value(2000).run()
+
+    folds = [s for s in at.slider if s.label == "Folds (k)"]
+    assert folds, "CV fold slider not found"
+    folds[0].set_value(3).run()
+    cv_buttons = [b for b in at.button if b.label == "🔁 Run cross-validation"]
+    assert cv_buttons, "cross-validation button not found"
+    cv_buttons[0].click().run()
+    assert not at.exception, f"cross-validation raised: {[str(e) for e in at.exception]}"
+    assert any(m.label == "Mean ROC-AUC" for m in at.metric)
+
+    search_buttons = [b for b in at.button if b.label == "🎛️ Search"]
+    assert search_buttons, "tuning button not found"
+    search_buttons[0].click().run()
+    assert not at.exception, f"hyperparameter search raised: {[str(e) for e in at.exception]}"
+    assert any(m.label == "Model fits spent" for m in at.metric)
+
+
+def test_propensity_page_draws_learning_and_validation_curves():
+    at = AppTest.from_file(str(ROOT / "pages/4_Propensity.py"), default_timeout=300)
+    at.run()
+    at.select_slider[0].set_value(2000).run()
+    curve_buttons = [b for b in at.button if b.label == "📈 Draw both curves"]
+    assert curve_buttons, "curve button not found"
+    curve_buttons[0].click().run()
+    assert not at.exception, f"curves raised: {[str(e) for e in at.exception]}"
+    assert any(m.label == "Gap" for m in at.metric)
+
+
+def test_survival_page_shows_kaplan_meier_readouts():
+    at = AppTest.from_file(str(ROOT / "pages/5_Survival.py"), default_timeout=180)
+    at.run()
+    assert not at.exception, f"survival load raised: {[str(e) for e in at.exception]}"
+    sample = [s for s in at.select_slider if s.label == "Customers to model"]
+    assert sample, "sample-size control not found"
+    sample[0].set_value(1000).run()
+    assert not at.exception
+    # S(t) readouts are rendered straight from the Kaplan-Meier curve.
+    assert any(m.label.startswith("S(12") for m in at.metric)
+
+
+def test_survival_page_trains_models_and_scores_them_over_time():
+    at = AppTest.from_file(str(ROOT / "pages/5_Survival.py"), default_timeout=300)
+    at.run()
+    at.select_slider[0].set_value(1000).run()
+
+    train_buttons = [b for b in at.button if b.label == "🏋️ Train all three models"]
+    assert train_buttons, "survival train button not found"
+    train_buttons[0].click().run()
+    assert not at.exception, f"survival training raised: {[str(e) for e in at.exception]}"
+
+    score_buttons = [b for b in at.button if b.label == "📏 Score all three models over time"]
+    assert score_buttons, "survival scoring button not found"
+    score_buttons[0].click().run()
+    assert not at.exception, f"survival scoring raised: {[str(e) for e in at.exception]}"
+    # The ranking-only model must explain itself rather than invent a Brier score.
+    assert any("Survival SVM" in w.value for w in at.warning)
+
+
+def test_survival_page_score_only_model_has_no_curves():
+    at = AppTest.from_file(str(ROOT / "pages/5_Survival.py"), default_timeout=300)
+    at.run()
+    at.select_slider[0].set_value(1000).run()
+    model_boxes = [s for s in at.selectbox if s.label == "Model"]
+    assert model_boxes, "survival model selectbox not found"
+    model_boxes[0].set_value("Survival SVM").run()
+    assert not at.exception, f"survival SVM selection raised: {[str(e) for e in at.exception]}"
+    assert any("no survival curve" in w.value for w in at.warning)
+
+
+def test_segmentation_page_reacts_to_the_retention_slider():
+    """The CLTV tab's headline interaction must not raise — and must not refit.
+
+    Dragging the retention rate recomputes customer equity from the cached
+    per-customer contribution only; if this ever starts reloading the 640,000-row
+    transaction log, the page becomes unusable in a live demo.
+    """
+    at = _run("pages/6_Segmentation.py")
+    assert not at.exception
+    # 4 CLTV assumption sliders + the clustering k slider.
+    assert len(at.slider) >= 5
+    retention = at.slider[1]
+    at = retention.set_value(0.85).run()
+    assert not at.exception, [str(e) for e in at.exception]
+    # Customer equity is reported as a metric and must survive the change.
+    assert any("equity" in m.label.lower() for m in at.metric)

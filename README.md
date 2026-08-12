@@ -1,6 +1,6 @@
 # Teaching App 🎓
 
-A multi-page **Streamlit** app that unifies two teaching lessons from this workspace into
+A multi-page **Streamlit** app that unifies the teaching lessons from this workspace into
 one interactive tool:
 
 - **🗄️ Database Basics** — a hands-on relational-database lesson organized into three tabs:
@@ -12,6 +12,18 @@ one interactive tool:
   running.
 - **⚡ Parallelization** — a "benchmark race" comparing **Serial vs Parallel vs Vectorized**
   row computations in Python, plus a side-by-side view of the equivalent Python and R code.
+- **🎯 Recommender Systems** — content-based filtering (TF-IDF + cosine similarity),
+  collaborative filtering (neighbourhood, a bias baseline, and from-scratch matrix
+  factorization trained live), and market-basket **association rules** via Apriori.
+- **🔮 Propensity Models** — look-alike modeling for churn: the observation → buffer →
+  outcome time design, three model families (logistic regression, XGBoost, neural net),
+  stratified cross-validation and grid/randomized search, the metrics imbalanced data
+  actually needs (confusion matrix, precision/recall/F1, ROC-AUC, PR-AUC), learning and
+  validation curves, and propensity scores cut into risk segments.
+- **⏳ Survival Analysis** — the same business question in time: **censoring**, Kaplan-Meier
+  survival curves, Cox / Random Survival Forest / Survival SVM, and the metrics censoring
+  forces on us (c-index, time-dependent AUC, integrated Brier score), ending in individual
+  survival curves and risk strata.
 
 ## Quickstart
 
@@ -49,7 +61,7 @@ falls back to a local SQLite database, so `make install && make run` works on it
 ## Project layout
 
 ```
-Home.py                     # Landing page (links to the two lessons)
+Home.py                     # Landing page (cards linking to every lesson)
 Makefile                    # Common tasks: make install / setup / run / test
 pyproject.toml              # Dependencies (source of truth), Python >= 3.13
 uv.lock                     # Pinned, reproducible resolution
@@ -60,11 +72,18 @@ ENVIRONMENTS.md             # Workspace-wide uv environment strategy
 pages/
   1_Database_Basics.py      # DB lesson UI
   2_Parallelization.py      # Parallelization lesson UI
+  3_Recommender.py          # Recommender Systems lesson UI
+  4_Propensity.py           # Propensity / look-alike modeling lesson UI
+  5_Survival.py             # Survival analysis lesson UI
 utils/
   data_generator.py         # @st.cache_data random dataset generator
   db_utils.py               # SQLAlchemy connection + CRUD/introspection/run_query (Postgres → SQLite fallback)
   compute_utils.py          # Serial / Parallel / Vectorized benchmark functions
+  io_utils.py               # Sequential / threaded / async / multiprocess I/O benchmarks
   teaching.py               # UI-free teaching helpers: source_of, postgres_docker_command, architecture_dot
+  recommender_utils.py      # TF-IDF, collaborative filtering, matrix factorization, Apriori
+  propensity_utils.py       # Churn classification, tuning, metrics, risk segments (+ synthetic fallback)
+  survival_utils.py         # Kaplan-Meier, Cox / RSF / Survival SVM, censoring-aware metrics
 tests/                      # pytest + Streamlit AppTest suite
 data/                       # Local SQLite fallback DB lives here (gitignored)
 ```
@@ -102,4 +121,9 @@ which already reuses `MAX(id) + 1`.
 - The Parallelization page **generates data on the fly** at the slider-selected size; it does
   not load the large `parallelization/data/parallel_big_data.csv`.
 - The R script (`parallelization/parallel/parallel.R`) is **displayed only, never executed**.
-- Adapted from the existing `parallelization/` and `postgresql/` teaching repos.
+- The Propensity and Survival pages fit their models on a **slider-selected sample** of the
+  ~505,000-customer churn dataset, so a live demo never waits minutes for a hyperparameter
+  search. If the sibling repo's git-ignored Kaggle CSVs are missing, both pages fall back to a
+  **synthetic** customer base with the same columns and say so on screen.
+- Adapted from the existing `parallelization/`, `postgresql/`, `recommender/` and
+  `predictions/` teaching repos — the app reads from them, it never copies them.

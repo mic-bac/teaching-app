@@ -22,6 +22,8 @@ st.markdown(
     - 🗄️ **Database Basics** — working with PostgreSQL running in Docker.
     - ⚡ **Parallelization** — comparing Serial vs Parallel vs Vectorized computation.
     - 🎯 **Recommender Systems** — content-based, collaborative, and association-rule recommenders.
+    - 🔮 **Propensity Models** — look-alike modeling: how likely is a customer to churn?
+    - ⏳ **Survival Analysis** — time-to-event: *when* will they churn, not just whether.
 
     Pick a lesson below to get started.
     """
@@ -70,6 +72,47 @@ with col3:
             "pages/3_Recommender.py",
             label="Open Recommender Systems",
             icon="🎯",
+        )
+
+col4, col5, col6 = st.columns(3)
+
+with col4:
+    with st.container(border=True):
+        st.markdown("### 🔮 Propensity Models")
+        st.write(
+            "Look-alike modeling: score every customer's probability of churning, "
+            "compare three model families, tune them, and cut the scores into risk segments."
+        )
+        st.page_link(
+            "pages/4_Propensity.py",
+            label="Open Propensity Models",
+            icon="🔮",
+        )
+
+with col5:
+    with st.container(border=True):
+        st.markdown("### ⏳ Survival Analysis")
+        st.write(
+            "Time-to-event modeling: Kaplan-Meier curves, censored data, Cox and "
+            "survival forests — predicting *when* a customer leaves, not just whether."
+        )
+        st.page_link(
+            "pages/5_Survival.py",
+            label="Open Survival Analysis",
+            icon="⏳",
+        )
+
+with col6:
+    with st.container(border=True):
+        st.markdown("### 🧩 Customer Segmentation")
+        st.write(
+            "RFM scoring, customer lifetime value from measured cohort retention, and "
+            "clustering — who your customers are, and what each of them is worth."
+        )
+        st.page_link(
+            "pages/6_Segmentation.py",
+            label="Open Customer Segmentation",
+            icon="🧩",
         )
 
 st.divider()
