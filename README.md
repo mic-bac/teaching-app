@@ -24,6 +24,10 @@ one interactive tool:
   survival curves, Cox / Random Survival Forest / Survival SVM, and the metrics censoring
   forces on us (c-index, time-dependent AUC, integrated Brier score), ending in individual
   survival curves and risk strata.
+- **🧩 Customer Segmentation** — **RFM** scoring (the R/F/M cube and a business-rule ladder),
+  **customer lifetime value** from a retention rate *measured* on cohorts (and how sharply the
+  value moves with that assumption), and **clustering** on demographics and behaviour,
+  evaluated without labels (silhouette, stability, a 2D projection).
 
 ## Quickstart
 
@@ -58,6 +62,34 @@ falls back to a local SQLite database, so `make install && make run` works on it
 | `make lock` / `make export-reqs` | Refresh `uv.lock` / regenerate `requirements.txt` |
 | `make clean` | Remove the virtualenv and Python caches |
 
+## Deployment (Railway)
+
+The repo ships a `Dockerfile` and `railway.json`; connect the GitHub repo in Railway and it
+builds the image (Railway injects `$PORT`, health check on `/_stcore/health`).
+
+The sibling lesson repos are **not** part of this repo. The container clones them **when it
+starts**, on the branch matching the app's (`siblings.toml`):
+
+| App branch | Sibling branch |
+|---|---|
+| `develop` | `develop` |
+| `main` | `main` |
+| anything else | `main` |
+
+Siblings are maintained first, so a restart/redeploy simply runs their latest commit on that
+branch — a sibling-only change needs no app commit, just a redeploy. The branch comes from
+Railway's `$RAILWAY_GIT_BRANCH` (override with a `SIBLING_BRANCH` service variable). Public
+datasets listed in `siblings.toml` are downloaded too (MovieLens from GroupLens); Kaggle-only
+datasets are not — those lessons fall back to synthetic data and say so on screen. PostgreSQL
+is not provisioned; the Database page uses its SQLite fallback.
+
+```bash
+make docker-build      # build exactly what Railway builds
+make docker-run        # run it at http://localhost:8501 (siblings on develop)
+make siblings-status   # which branch each local sibling is on vs. expected
+make siblings          # clone any missing sibling on the matching branch (fresh clone)
+```
+
 ## Project layout
 
 ```
@@ -67,6 +99,10 @@ pyproject.toml              # Dependencies (source of truth), Python >= 3.13
 uv.lock                     # Pinned, reproducible resolution
 .python-version             # Pins the interpreter to 3.13
 requirements.txt            # Exported from the lock (pip/deploy fallback)
+Dockerfile, railway.json    # Deployment image + Railway config
+scripts/start.sh            # Container start: fetch siblings for this branch, then serve
+siblings.toml               # Sibling repos, branch rule (develop↔develop, main↔main), public data
+scripts/siblings.py         # fetch / data / status for the siblings (stdlib only)
 ENVIRONMENTS.md             # Workspace-wide uv environment strategy
 .streamlit/config.toml      # Theme
 pages/
@@ -75,6 +111,7 @@ pages/
   3_Recommender.py          # Recommender Systems lesson UI
   4_Propensity.py           # Propensity / look-alike modeling lesson UI
   5_Survival.py             # Survival analysis lesson UI
+  6_Segmentation.py         # Customer segmentation lesson UI (RFM, CLTV, clustering)
 utils/
   data_generator.py         # @st.cache_data random dataset generator
   db_utils.py               # SQLAlchemy connection + CRUD/introspection/run_query (Postgres → SQLite fallback)
@@ -84,6 +121,7 @@ utils/
   recommender_utils.py      # TF-IDF, collaborative filtering, matrix factorization, Apriori
   propensity_utils.py       # Churn classification, tuning, metrics, risk segments (+ synthetic fallback)
   survival_utils.py         # Kaplan-Meier, Cox / RSF / Survival SVM, censoring-aware metrics
+  segmentation_utils.py     # Thin adapter that imports segmentation/src/* (RFM, CLTV, clustering)
 tests/                      # pytest + Streamlit AppTest suite
 data/                       # Local SQLite fallback DB lives here (gitignored)
 ```
@@ -125,5 +163,8 @@ which already reuses `MAX(id) + 1`.
   ~505,000-customer churn dataset, so a live demo never waits minutes for a hyperparameter
   search. If the sibling repo's git-ignored Kaggle CSVs are missing, both pages fall back to a
   **synthetic** customer base with the same columns and say so on screen.
-- Adapted from the existing `parallelization/`, `postgresql/`, `recommender/` and
-  `predictions/` teaching repos — the app reads from them, it never copies them.
+- The Segmentation page **imports the sibling's own `segmentation/src/` modules** instead of
+  re-implementing them, so the code it shows is literally the code the lesson repo runs. If the
+  sibling's data files are missing, its loaders fall back to synthetic data and the page says so.
+- Adapted from the existing `parallelization/`, `postgresql/`, `recommender/`, `predictions/`
+  and `segmentation/` teaching repos — the app reads from them, it never copies them.

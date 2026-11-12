@@ -112,6 +112,22 @@ def test_recommender_page_content_based_selectbox():
     assert len(at.dataframe) >= 1  # a recommendations table is shown
 
 
+def test_recommender_page_explains_synthetic_groceries(monkeypatch):
+    """Without the Kaggle CSV the page runs on synthetic baskets and says so."""
+    from utils import recommender_utils
+
+    synthetic = recommender_utils._groceries_module().make_synthetic_groceries()
+    monkeypatch.setattr(recommender_utils, "load_groceries", lambda: (synthetic, "synthetic"))
+    import streamlit as st
+
+    st.cache_data.clear()  # earlier tests may have cached the real file
+    at = AppTest.from_file(str(ROOT / "pages/3_Recommender.py"), default_timeout=180)
+    at.run()
+    assert not at.exception
+    assert any("Synthetic baskets" in i.value for i in at.info)
+    st.cache_data.clear()  # don't leak the synthetic data into later tests
+
+
 def test_recommender_page_matrix_factorization_trains():
     at = AppTest.from_file(str(ROOT / "pages/3_Recommender.py"), default_timeout=180)
     at.run()

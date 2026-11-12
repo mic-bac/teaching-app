@@ -56,6 +56,7 @@ from sklearn.model_selection import (
     validation_curve,
 )
 from sklearn.neural_network import MLPClassifier
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 # Default location of the sibling repo's dataset (read-only).
@@ -192,29 +193,29 @@ def prepare_features(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, dict
     return data.drop(columns="Churn"), data["Churn"], encoders
 
 
-def split_and_scale(
+def stratified_split(
     X: pd.DataFrame, y: pd.Series, test_size: float = 0.2, random_state: int = 42
 ) -> dict:
-    """Stratified train/test split plus a standardised copy of the features.
+    """Stratified train/test split — and deliberately *no* scaling here.
 
-    Two versions of the same split come back: raw (trees split on thresholds and
-    do not care about scale) and standardised (logistic regression and neural
-    nets are gradient based and very much do). Stratifying keeps the churn rate
-    identical on both sides, so a test score measures the model rather than an
-    accident of sampling.
+    Stratifying keeps the churn rate identical on both sides, so a test score
+    measures the model rather than an accident of sampling.
+
+    Scaling is not done here because it belongs *inside the model* (see
+    ``build_model``). Scaling the whole training set up front and then running
+    cross-validation on it would let every validation fold influence the
+    mean/std its own model was scaled with — a quiet form of data leakage
+    (slide: "Typische Fehlerquellen"). Split first, preprocess inside the
+    pipeline.
     """
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, random_state=random_state, stratify=y
     )
-    scaler = StandardScaler()
     return {
         "X_train": X_train,
         "X_test": X_test,
         "y_train": y_train,
         "y_test": y_test,
-        "X_train_scaled": scaler.fit_transform(X_train),
-        "X_test_scaled": scaler.transform(X_test),
-        "scaler": scaler,
         "feature_names": list(X_train.columns),
     }
 
@@ -287,7 +288,38 @@ VALIDATION_SWEEPS: dict[str, dict] = {
 
 
 def build_model(name: str, random_state: int = 42, **overrides):
-    """Return an untrained classifier by name (see ``MODEL_SPECS``)."""
+    """Return an untrained model by name (see ``MODEL_SPECS``).
+
+    Scale-sensitive families (logistic regression, the neural net) come back as a
+    ``Pipeline(scale -> model)``: standardisation is part of the model, so every
+    ``fit`` — including each cross-validation fold — learns its mean/std from its
+    own training rows only. Trees split on thresholds and need no scaling.
+    ``overrides`` go to the classifier itself.
+    """
+    estimator = _build_classifier(name, random_state, **overrides)
+    if MODEL_SPECS[name]["needs_scaling"]:
+        return Pipeline([("scale", StandardScaler()), ("model", estimator)])
+    return estimator
+
+
+def pipeline_params(model, params: dict) -> dict:
+    """Address hyperparameters correctly whether or not ``model`` is a Pipeline.
+
+    Inside a Pipeline a parameter is named ``<step>__<param>`` (``model__C``).
+    The page talks about plain names (``C``), so this adds the prefix when needed.
+    """
+    if isinstance(model, Pipeline):
+        return {(k if "__" in k else f"model__{k}"): v for k, v in params.items()}
+    return params
+
+
+def _plain_params(params: dict) -> dict:
+    """Strip the ``model__`` prefix again for display."""
+    return {k.removeprefix("model__"): v for k, v in params.items()}
+
+
+def _build_classifier(name: str, random_state: int = 42, **overrides):
+    """The bare classifier for one family, before any pipeline wrapping."""
     if name == "Logistic Regression":
         params = {"random_state": random_state, "max_iter": 1000, **overrides}
         return LogisticRegression(**params)
@@ -312,13 +344,6 @@ def build_model(name: str, random_state: int = 42, **overrides):
         }
         return MLPClassifier(**params)
     raise ValueError(f"Unknown model: {name!r}. Choose one of {list(MODEL_SPECS)}.")
-
-
-def training_data_for(name: str, split: dict) -> tuple:
-    """Pick the scaled or raw matrices for this model family."""
-    if MODEL_SPECS[name]["needs_scaling"]:
-        return split["X_train_scaled"], split["X_test_scaled"]
-    return split["X_train"], split["X_test"]
 
 
 def fit_and_score(model, X_fit, y_fit, X_eval, y_eval, threshold: float = 0.5) -> dict:
@@ -427,13 +452,14 @@ def tune_model(
     spec = MODEL_SPECS[name]
     estimator = build_model(name, random_state=random_state)
 
+    grid = pipeline_params(estimator, spec["grid"])
     if spec["search"] == "grid":
-        search = GridSearchCV(estimator, spec["grid"], cv=cv, scoring="roc_auc", n_jobs=-1)
+        search = GridSearchCV(estimator, grid, cv=cv, scoring="roc_auc", n_jobs=-1)
         n_candidates = int(np.prod([len(v) for v in spec["grid"].values()]))
     else:
         search = RandomizedSearchCV(
             estimator,
-            spec["grid"],
+            grid,
             n_iter=n_iter,
             cv=cv,
             scoring="roc_auc",
@@ -448,10 +474,10 @@ def tune_model(
         .sort_values("rank_test_score")
         .reset_index(drop=True)
     )
-    results["params"] = results["params"].astype(str)
+    results["params"] = results["params"].map(lambda p: str(_plain_params(p)))
     return {
         "estimator": search.best_estimator_,
-        "best_params": search.best_params_,
+        "best_params": _plain_params(search.best_params_),
         "best_score": search.best_score_,
         "results": results,
         "n_candidates": n_candidates,
@@ -489,6 +515,44 @@ def learning_curve_frame(
     )
 
 
+BIAS_MARGIN = 0.02     # validation this far below the best model = high bias
+FLAT_CURVE_SPREAD = 0.005  # a validation curve varying less than this is flat
+
+
+def diagnose_learning_curve(train_final: float, validation_final: float, best_model_score: float) -> tuple[str, str]:
+    """Read a learning curve — against a yardstick, not in isolation.
+
+    Returns ``(kind, message)`` with ``kind`` in ``overfit``/``underfit``/``bias``/``healthy``.
+
+    "The curves converge" only means the model is not memorising. It can still be
+    too SIMPLE: if a more flexible model reaches clearly higher on the same data,
+    the converged curve sits below what is achievable — high bias. More data will
+    not fix that; a more expressive model will.
+    """
+    gap = train_final - validation_final
+    if gap > 0.05:
+        return "overfit", "Training is well above validation — the model is memorising. Regularise or simplify it."
+    if validation_final < 0.7:
+        return "underfit", "Both curves sit low — the model is too simple for this problem (underfitting)."
+    if best_model_score - validation_final > BIAS_MARGIN:
+        return "bias", (
+            f"The curves converge — but at {validation_final:.3f}, below the {best_model_score:.3f} a more "
+            "flexible model reaches on the same data. That is **high bias**: more data will not help "
+            "this model, a more expressive one does. Converged is not the same as good."
+        )
+    return "healthy", "The curves converge at the level the best model reaches: this model generalises on this data."
+
+
+def validation_curve_is_flat(validation: pd.DataFrame, spread: float = FLAT_CURVE_SPREAD) -> bool:
+    """True if the hyperparameter barely moves the validation score.
+
+    Then "best value = X" is noise, not a finding — the honest reading is that
+    this knob does not matter on this data.
+    """
+    means = validation["validation_mean"]
+    return float(means.max() - means.min()) < spread
+
+
 def validation_curve_frame(
     model, X, y, param_name: str, param_range: list, cv: int = 3, random_state: int = 42
 ) -> pd.DataFrame:
@@ -497,6 +561,7 @@ def validation_curve_frame(
     Where the validation curve peaks and starts to fall is the complexity limit
     of this model on this data — worth knowing *before* launching a full search.
     """
+    (param_name,) = pipeline_params(model, {param_name: None})
     train_scores, val_scores = validation_curve(
         model,
         X,
@@ -528,6 +593,8 @@ def feature_importance(model, feature_names, top_n: int = 10) -> pd.DataFrame:
     an effect (|coefficient|), a tree model reports *how useful a feature was for
     splitting*. They often disagree, and that disagreement is worth discussing.
     """
+    if isinstance(model, Pipeline):
+        model = model.named_steps["model"]  # the scaler has no importances to report
     if hasattr(model, "coef_"):
         weights = np.abs(np.ravel(model.coef_))
         kind = "|coefficient|"

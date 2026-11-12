@@ -142,7 +142,8 @@ def cached_baseline():
 
 @st.cache_data(show_spinner=False)
 def cached_transactions():
-    return R.build_transactions(cached_groceries())
+    frame, _source = cached_groceries()
+    return R.build_transactions(frame)
 
 
 @st.cache_data(show_spinner=False)
@@ -345,9 +346,17 @@ methods find the nearest *neighbors* by cosine similarity:
         ub = R.get_user_based_recommendations(uid, user_item, user_sim)
         st.markdown("**Recommended for this user (weighted by neighbor similarity):**")
         st.dataframe(
-            ub.rename("score").reset_index().rename(columns={"title": "movie"}),
+            ub.reset_index().rename(
+                columns={"title": "movie", "index": "movie", "neighbors_who_rated": "raters"}
+            ).style.format({"score": "{:.2f}"}),
             use_container_width=True,
             hide_index=True,
+        )
+        st.caption(
+            "Scores are averages over the 30 most similar users; `raters` is how many of them "
+            "rated the movie, and at least **5** must have. Without that guard the top of the list is "
+            "obscure films one neighbour gave 5 stars — all tied at 5.0, in arbitrary order. "
+            "That is the *sparsity problem* from the slides."
         )
         with st.expander(f"What user {uid} already rated highly"):
             top_rated = (
@@ -492,9 +501,14 @@ gradient descent** — click below to watch the training error fall.
             rec_user, model, movies, ratings, u2i, i2i, i2it, num_recommendations=10
         )
         st.dataframe(
-            mf_recs.style.format({"predicted_rating": "{:.2f}"}),
+            mf_recs.style.format({"predicted_rating": "{:.2f}", "model_score": "{:.3f}"}),
             use_container_width=True,
             hide_index=True,
+        )
+        st.caption(
+            "Ranked on `model_score`, the uncapped prediction. A generous rater's favourites "
+            "can all score above 5 stars; capped to the star scale (`predicted_rating`) they "
+            "would tie at 5.00 and the model's ordering would be lost."
         )
 
         with st.expander("🗺️ Show the learned 2D 'taste space' (PCA of movie factors)"):
@@ -535,7 +549,30 @@ threshold, then turns them into rules.
 """
     )
 
+    try:
+        _groceries, groceries_source = cached_groceries()
+    except FileNotFoundError as exc:
+        # The sibling checkout predates its groceries module (develop not pulled /
+        # pushed yet). Last tab on the page, so stopping here costs nothing else.
+        st.warning(f"The recommender sibling is older than this app expects: {exc}. "
+                   "Pull its branch locally, or push it so a deployment picks it up.")
+        st.stop()
     transactions = cached_transactions()
+    if groceries_source == "synthetic":
+        st.info(
+            "**Synthetic baskets.** The real Groceries file is a Kaggle download and is not "
+            "available here, so the sibling repo generated baskets in the same format — with "
+            "**planted shopping missions**. That makes this a test you can grade: the strongest "
+            "rules below should recover exactly these missions, while popular staples like "
+            "*whole milk* come out at lift ≈ 1 — frequent, but not associated."
+        )
+        st.dataframe(R.planted_missions(), use_container_width=True, hide_index=True)
+    else:
+        st.caption(
+            "Real receipts from the Kaggle Groceries dataset. Expect *weak* associations "
+            "(lift rarely above ~1.6): baskets here are a member's purchases on one day, "
+            "only ~2.6 items each — real data is noisy."
+        )
     st.caption(
         f"{transactions.shape[0]:,} baskets · {transactions.shape[1]} distinct items "
         "(each basket = one member on one day)."
@@ -587,9 +624,17 @@ threshold, then turns them into rules.
 
         st.divider()
         st.subheader("🛒 Frequently bought together")
-        antecedent_items = sorted({item for a in rules["antecedents"] for item in a})
-        default_i = antecedent_items.index("whole milk") if "whole milk" in antecedent_items else 0
+        single_rules = rules[rules["antecedents"].apply(len) == 1]
+        antecedent_items = sorted({next(iter(a)) for a in single_rules["antecedents"]})
+        # Start on the item with the strongest single-item rule; whole milk stays in
+        # the list on purpose — pick it to see that popular is not the same as related.
+        strongest = next(iter(single_rules.nlargest(1, "lift")["antecedents"].iloc[0])) if len(single_rules) else None
+        default_i = antecedent_items.index(strongest) if strongest in antecedent_items else 0
         basket_item = st.selectbox("A customer just added…", antecedent_items, index=default_i)
+        st.caption(
+            "Only rules whose *if*-side is exactly this item, and only with lift > 1. "
+            "Try **whole milk**: in almost every basket, yet associated with nothing in particular."
+        )
         basket = R.get_basket_recommendations(basket_item, rules)
         if isinstance(basket, str):
             st.warning(basket)

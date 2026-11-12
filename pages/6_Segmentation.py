@@ -503,15 +503,15 @@ with tab_cltv:
 
     s1, s2, s3, s4 = st.columns(4)
     with s1:
-        gross_margin = st.slider("Gross margin", 0.05, 0.60, 0.30, 0.05, format="%.2f",
+        gross_margin = st.slider("Gross margin", 0.05, 0.60, S.GROSS_MARGIN, 0.05, format="%.2f",
                                  help="Contribution per euro of revenue.")
     with s2:
         retention_rate = st.slider("Retention rate Rr", 0.30, 0.95, float(round(measured_rr, 2)),
                                    0.01, help=f"Measured from cohorts: {measured_rr:.1%}")
     with s3:
-        discount_rate = st.slider("Discount rate d", 0.00, 0.30, 0.10, 0.01)
+        discount_rate = st.slider("Discount rate d", 0.00, 0.30, S.DISCOUNT_RATE, 0.01)
     with s4:
-        acquisition_cost = st.slider("Acquisition cost €", 0, 600, 150, 25)
+        acquisition_cost = st.slider("Acquisition cost €", 0, 600, int(S.ACQUISITION_COST), 25)
 
     customers = cached_customers()
     gross_contribution = S.annual_contribution(customers, gross_margin)
@@ -701,9 +701,14 @@ with tab_cluster:
             st.caption(
                 "Adjusted Rand index: 1.0 means the same customers grouped together every "
                 "time, 0.0 means chance. Anything you intend to build campaigns on should be "
-                "well above 0.75 — the segments have to survive next quarter's data too."
+                "well above 0.75 — the segments have to survive next quarter's data too. "
+                "But stable is necessary, not sufficient: an algorithm can find the *same "
+                "meaningless* partition every time (DBSCAN's tiny pockets here). So the verdict "
+                "also checks separation — a silhouette below 0.1 means there is no real structure, "
+                "however stable it looks."
             )
         show_source(S.stability, "Show the code: resampling and measuring agreement")
+        show_source(S.stability_verdict, "Show the code: the verdict reads stability AND separation")
 
         st.divider()
         st.subheader("Who are these people?")
@@ -742,14 +747,15 @@ with tab_compare:
     st.subheader("RFM tells you who is slipping away. CLTV tells you what that costs.")
     st.markdown(
         "Cross the two and you stop having rankings and start having a to-do list. "
-        "The tiers below use the measured retention rate and the assumptions from the CLTV tab."
+        "The tiers below use the measured retention rate and the lesson's default assumptions "
+        "(`segmentation/src/cltv_core.py`) — not the CLTV-tab sliders — so they match `cltv.py`."
     )
 
     scored = cached_rfm()
     customers = cached_customers()
     _matrix, annual, _bands = cached_cohorts()
-    gross_contribution = S.annual_contribution(customers, 0.30)
-    clv = S.predictive_clv(gross_contribution, annual["retention_rate"], 0.10, 150.0)
+    gross_contribution = S.annual_contribution(customers, S.GROSS_MARGIN)
+    clv = S.predictive_clv(gross_contribution, annual["retention_rate"], S.DISCOUNT_RATE, S.ACQUISITION_COST)
 
     combined = pd.DataFrame(
         {

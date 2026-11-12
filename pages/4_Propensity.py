@@ -66,15 +66,16 @@ def cached_features(sample_size: int):
 @st.cache_resource(show_spinner=False)
 def cached_split(sample_size: int):
     X, y, _ = cached_features(sample_size)
-    return P.split_and_scale(X, y)
+    return P.stratified_split(X, y)
 
 
 @st.cache_resource(show_spinner=False)
 def cached_fit(model_name: str, sample_size: int):
     """Fit one model family on the current sample and score it on the held-out test set."""
     split = cached_split(sample_size)
-    X_fit, X_eval = P.training_data_for(model_name, split)
-    return P.fit_and_score(P.build_model(model_name), X_fit, split["y_train"], X_eval, split["y_test"])
+    return P.fit_and_score(
+        P.build_model(model_name), split["X_train"], split["y_train"], split["X_test"], split["y_test"]
+    )
 
 
 def _band(frame: pd.DataFrame, x: str, mean: str, std: str, name: str, color: str) -> list:
@@ -345,12 +346,16 @@ with tab_data:
           are kept so a new customer can be encoded the same way later.
         - The split is **stratified**: the churn rate is identical on both sides, so a test score
           measures the model instead of an accident of sampling.
+        - **Split first, then preprocess.** Scaling is *not* done here: it lives inside a
+          `Pipeline(StandardScaler → model)` (see the Models tab), so every fit — including each
+          cross-validation fold — learns its mean/std from its own training rows only. Scaling
+          everything up front would leak the validation folds into preprocessing.
         """
     )
 
     show_source(P.load_churn, "🐍 Loading the data (with the synthetic fallback)")
     show_source(P.prepare_features, "🐍 Encoding features")
-    show_source(P.split_and_scale, "🐍 Splitting and scaling")
+    show_source(P.stratified_split, "🐍 Splitting (scaling happens inside the model)")
 
 # ===========================================================================
 # TAB 4 — Models
@@ -476,7 +481,7 @@ with tab_tuning:
     n_splits = st.slider("Folds (k)", 3, 10, 5)
 
     if st.button("🔁 Run cross-validation"):
-        X_fit, _ = P.training_data_for(cv_model, split)
+        X_fit = split["X_train"]  # raw: the pipeline rescales inside every fold
         with st.spinner(f"Training {cv_model} {n_splits} times…"):
             scores = P.cross_validate_model(P.build_model(cv_model), X_fit, split["y_train"], n_splits=n_splits)
         st.session_state["cv_scores"] = (cv_model, scores)
@@ -529,7 +534,7 @@ with tab_tuning:
     st.code(repr(spec["grid"]), language="python")
 
     if st.button("🎛️ Search"):
-        X_fit, _ = P.training_data_for(tune_name, split)
+        X_fit = split["X_train"]
         with st.spinner("Cross-validating every candidate…"):
             st.session_state["tuned"] = (tune_name, P.tune_model(tune_name, X_fit, split["y_train"], n_iter=n_iter or 8, cv=tune_cv))
 
@@ -568,7 +573,7 @@ with tab_curves:
     )
 
     curve_model = st.selectbox("Model", list(P.MODEL_SPECS), key="curve_model")
-    X_fit, _ = P.training_data_for(curve_model, split)
+    X_fit = split["X_train"]
 
     if st.button("📈 Draw both curves"):
         sweep = P.VALIDATION_SWEEPS[curve_model]
@@ -601,12 +606,12 @@ with tab_curves:
         c1.metric("Training (full sample)", f"{learning['train_mean'].iloc[-1]:.4f}")
         c2.metric("Validation (full sample)", f"{learning['validation_mean'].iloc[-1]:.4f}")
         c3.metric("Gap", f"{gap:+.4f}", help="A large positive gap is the signature of overfitting.")
-        if gap > 0.05:
-            st.warning("Training is well above validation — the model is memorising. Regularise or simplify it.")
-        elif learning["validation_mean"].iloc[-1] < 0.7:
-            st.warning("Both curves sit low — the model is too simple for this problem (underfitting).")
-        else:
-            st.success("The curves converge at a high level: this model generalises on this data.")
+        best_model_score = max(cached_fit(m, sample_size)["metrics"]["ROC-AUC"] for m in P.MODEL_SPECS)
+        kind, message = P.diagnose_learning_curve(
+            learning["train_mean"].iloc[-1], learning["validation_mean"].iloc[-1], best_model_score
+        )
+        (st.success if kind == "healthy" else st.warning)(message)
+        st.caption(f"Yardstick: the best of the three model families scores {best_model_score:.3f} ROC-AUC on the test set.")
 
         fig_vc = go.Figure()
         for trace in _band(validation, "value", "train_mean", "train_std", "Training", "#3498db"):
@@ -622,11 +627,19 @@ with tab_curves:
         )
         st.plotly_chart(fig_vc, use_container_width=True)
         best_value = validation.loc[validation["validation_mean"].idxmax(), "value"]
-        st.info(f"{sweep['reads']}  \nBest validation score at **{sweep['param']} = {best_value}**.")
+        if P.validation_curve_is_flat(validation):
+            spread = validation["validation_mean"].max() - validation["validation_mean"].min()
+            st.info(
+                f"{sweep['reads']}  \nHere the curve is **flat** (validation varies by only {spread:.4f}): "
+                f"`{sweep['param']}` barely matters on this data, so \"best = {best_value}\" is noise, not a finding."
+            )
+        else:
+            st.info(f"{sweep['reads']}  \nBest validation score at **{sweep['param']} = {best_value}**.")
     else:
         st.info("Pick a model and click **📈 Draw both curves** — this refits it several times, so it takes a moment.")
 
     show_source(P.learning_curve_frame, "🐍 Learning curve")
+    show_source(P.diagnose_learning_curve, "🐍 Reading the learning curve against a yardstick")
     show_source(P.validation_curve_frame, "🐍 Validation curve")
 
 # ===========================================================================
@@ -677,6 +690,15 @@ with tab_scores:
         "The realised churn rate should climb steeply from Low to High. That climb *is* the "
         "business value: it says the retention budget can be aimed instead of sprayed."
     )
+    if data_source == "kaggle":
+        st.warning(
+            "**A word on this dataset.** The two colours separate almost perfectly — that says more "
+            "about the Kaggle data than about churn modelling. Single thresholds nearly decide the "
+            "label: more than 5 support calls, more than 20 days of payment delay, under 500 total "
+            "spend or a monthly contract each come with a churn rate around 90%. Real churn data "
+            "overlaps far more — expect ROC-AUC around 0.7–0.8, not 0.95, and a much fuller "
+            "medium-risk segment."
+        )
 
     st.markdown("**Where should the decision threshold sit?**")
     sweep = P.threshold_sweep(split["y_test"], scored["probabilities"])

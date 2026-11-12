@@ -9,9 +9,38 @@ Kept free of Streamlit so it can be unit-tested directly. The pages import these
 and do the actual ``st.*`` rendering themselves.
 """
 
+import importlib.util
 import inspect
 import re
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_sibling_module(sibling: str, relative_path: str):
+    """Import ONE pure module from a sibling repo, under a collision-free name.
+
+    Several siblings keep their importable code in a package called ``src``
+    (``segmentation/src``, ``predictions/src``, ``recommender/src``). Putting more
+    than one of them on ``sys.path`` and writing ``from src import ...`` would make
+    them shadow each other inside one Streamlit process. Loading the file directly,
+    registered as ``sibling_<repo>_<module>``, sidesteps that: the module is the
+    sibling's own code, imported once, and nothing else on ``sys.path`` changes.
+
+    Raises ``FileNotFoundError`` if the sibling (or the file) is not checked out.
+    """
+    path = ROOT / sibling / relative_path
+    name = f"sibling_{sibling}_{Path(relative_path).stem}".replace("-", "_")
+    if name in sys.modules:
+        return sys.modules[name]
+    if not path.exists():
+        raise FileNotFoundError(f"{sibling}/{relative_path} is not checked out")
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def source_of(obj) -> str:

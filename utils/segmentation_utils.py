@@ -52,6 +52,7 @@ SIBLING = Path(__file__).resolve().parents[1] / "segmentation"
 try:  # pragma: no cover - exercised by the missing-sibling path
     if str(SIBLING) not in sys.path:
         sys.path.insert(0, str(SIBLING))
+    from src import cltv_core as _cltv
     from src import clustering_core as _clustering
     from src import personality_data as _personality
     from src import retail_data as _retail
@@ -62,7 +63,7 @@ try:  # pragma: no cover - exercised by the missing-sibling path
 except ImportError as exc:  # pragma: no cover - only when the sibling is absent
     SIBLING_AVAILABLE = False
     SIBLING_ERROR = str(exc)
-    _retail = _rfm = _clustering = _personality = None
+    _retail = _rfm = _clustering = _personality = _cltv = None
 
 
 # ===========================================================================
@@ -70,41 +71,61 @@ except ImportError as exc:  # pragma: no cover - only when the sibling is absent
 # ===========================================================================
 
 if SIBLING_AVAILABLE:
-    # Transactions (RFM + CLTV)
-    load_transactions = _retail.prepare
-    customer_table = _retail.customer_table
-    cohort_retention = _retail.cohort_retention
-    annual_retention = _retail.annual_retention
-    retention_by_recency_band = _retail.retention_by_recency_band
-    is_wholesale = _retail.is_wholesale
-    wholesale_profile = _retail.wholesale_profile
-    clean_transactions = _retail.clean_transactions
+    # A sibling checkout OLDER than this app (e.g. its develop not pulled/pushed
+    # yet) imports fine but lacks newer names. Report that as "sibling
+    # unavailable", with the reason, instead of crashing the page.
+    try:
+        # Transactions (RFM + CLTV)
+        load_transactions = _retail.prepare
+        customer_table = _retail.customer_table
+        cohort_retention = _retail.cohort_retention
+        annual_retention = _retail.annual_retention
+        retention_by_recency_band = _retail.retention_by_recency_band
+        is_wholesale = _retail.is_wholesale
+        wholesale_profile = _retail.wholesale_profile
+        clean_transactions = _retail.clean_transactions
 
-    # RFM scoring
-    build_rfm = _rfm.build_rfm
-    score_rfm = _rfm.score_rfm
-    rfm_cube = _rfm.rfm_cube
-    rfm_ladder = _rfm.rfm_ladder
-    segment_rfm = _rfm.segment_rfm
-    CUBE_NAMES = _rfm.CUBE_NAMES
-    LADDER_RULES = _rfm.LADDER_RULES
+        # RFM scoring
+        build_rfm = _rfm.build_rfm
+        score_rfm = _rfm.score_rfm
+        rfm_cube = _rfm.rfm_cube
+        rfm_ladder = _rfm.rfm_ladder
+        segment_rfm = _rfm.segment_rfm
+        CUBE_NAMES = _rfm.CUBE_NAMES
+        LADDER_RULES = _rfm.LADDER_RULES
 
-    # Clustering
-    load_personality = _personality.prepare
-    CLUSTERING_FEATURES = _personality.CLUSTERING_FEATURES
-    scale_features = _clustering.scale_features
-    sweep_k = _clustering.sweep_k
-    choose_k = _clustering.choose_k
-    choose_eps = _clustering.choose_eps
-    build_algorithms = _clustering.build_algorithms
-    estimate_meanshift_bandwidth = _clustering.estimate_meanshift_bandwidth
-    score_clustering = _clustering.score_clustering
-    stability = _clustering.stability
-    pca_projection = _clustering.pca_projection
-    profile_clusters = _clustering.profile_clusters
-    cluster_fingerprints = _clustering.cluster_fingerprints
-    name_segment = _clustering.name_segment
-    FAMILIES = _clustering.FAMILIES
+        # CLTV — the formulas and the lesson's business assumptions
+        annual_contribution = _cltv.annual_contribution
+        clv_multiplier = _cltv.clv_multiplier
+        value_tiers = _cltv.clv_segments
+        GROSS_MARGIN = _cltv.GROSS_MARGIN
+        DISCOUNT_RATE = _cltv.DISCOUNT_RATE
+        ACQUISITION_COST = _cltv.ACQUISITION_COST
+        MIN_TENURE_DAYS = _cltv.MIN_TENURE_DAYS
+
+        # Clustering
+        load_personality = _personality.prepare
+        CLUSTERING_FEATURES = _personality.CLUSTERING_FEATURES
+        scale_features = _clustering.scale_features
+        sweep_k = _clustering.sweep_k
+        choose_k = _clustering.choose_k
+        choose_eps = _clustering.choose_eps
+        build_algorithms = _clustering.build_algorithms
+        estimate_meanshift_bandwidth = _clustering.estimate_meanshift_bandwidth
+        score_clustering = _clustering.score_clustering
+        stability = _clustering.stability
+        stability_verdict = _clustering.stability_verdict
+        pca_projection = _clustering.pca_projection
+        profile_clusters = _clustering.profile_clusters
+        cluster_fingerprints = _clustering.cluster_fingerprints
+        name_segment = _clustering.name_segment
+        FAMILIES = _clustering.FAMILIES
+    except AttributeError as exc:  # pragma: no cover - only with an outdated sibling
+        SIBLING_AVAILABLE = False
+        SIBLING_ERROR = (
+            f"the segmentation sibling is older than this app expects ({exc}). "
+            "Pull its branch locally, or push it so a deployment picks it up."
+        )
 
 
 # ===========================================================================
@@ -232,16 +253,6 @@ def retention_curve_frame(matrix: pd.DataFrame, max_periods: int = 13) -> pd.Dat
     return pd.concat([long, mean_rows], ignore_index=True)
 
 
-def clv_multiplier(retention_rate: float, discount_rate: float) -> float:
-    """``Rr / (1 - Rr + d)`` — how many years of contribution a customer is worth.
-
-    The heart of the lecture's closed form. Kept here (rather than imported) so
-    the page can call it on slider values without touching the lesson script's
-    module-level constants.
-    """
-    return retention_rate / (1 - retention_rate + discount_rate)
-
-
 def sensitivity_frame(
     retention_rates: list[float], discount_rates: list[float]
 ) -> pd.DataFrame:
@@ -284,38 +295,19 @@ def equity_curve(
     )
 
 
-def annual_contribution(
-    customers: pd.DataFrame, gross_margin: float, min_tenure_days: int = 365
-) -> pd.Series:
-    """GC_i — yearly gross contribution, annualised over observed tenure.
-
-    ``min_tenure_days`` is the modelling decision that matters most here: a
-    customer who ordered once has an observed tenure of zero days. Flooring at a
-    year says "we will not annualise from less than a year of history"; flooring
-    at a month would record their single basket as twelve baskets a year and
-    promote one-time buyers into the most valuable segment on the page.
-    """
-    observed_years = np.maximum(customers["TenureDays"], min_tenure_days) / 365.25
-    return customers["Revenue"] / observed_years * gross_margin
-
-
 def predictive_clv(
     gross_contribution: pd.Series,
     retention_rate: float | pd.Series,
     discount_rate: float,
     acquisition_cost: float,
 ) -> pd.Series:
-    """``LTV_i = GC_i * (Rr / (1 - Rr + d)) - AC_i`` — the lecture's closed form."""
-    if isinstance(retention_rate, pd.Series):
-        multiplier = retention_rate.map(lambda rr: clv_multiplier(rr, discount_rate))
-    else:
-        multiplier = clv_multiplier(retention_rate, discount_rate)
-    return gross_contribution * multiplier - acquisition_cost
+    """``LTV_i = GC_i * (Rr / (1 - Rr + d)) - AC_i`` — the lecture's closed form.
 
-
-def value_tiers(clv: pd.Series) -> pd.Series:
-    """Cut customers into four value tiers by CLTV quartile."""
-    return pd.qcut(clv, 4, labels=["Low Value", "Medium Value", "High Value", "Premium"])
+    Takes GC as a Series (rather than the customer table the lesson script uses)
+    so the page can recompute it from slider values; the multiplier itself is the
+    sibling's ``cltv_core.clv_multiplier``, which accepts a scalar or a Series.
+    """
+    return gross_contribution * clv_multiplier(retention_rate, discount_rate) - acquisition_cost
 
 
 def wholesale_comparison(transactions: pd.DataFrame) -> pd.DataFrame:
@@ -393,20 +385,22 @@ def stability_frame(algorithms: dict, X: np.ndarray, labels: dict) -> pd.DataFra
 
     The check most reporting skips: if dropping a random fifth of the customers
     reshuffles the segments, the segments were never there — and no silhouette
-    score would have told you.
+    score would have told you. The reverse holds too: an algorithm can find the
+    same *meaningless* partition every time, so the verdict (the sibling's
+    ``stability_verdict``) reads stability together with the silhouette.
     """
     rows = []
     for name, spec in algorithms.items():
         mean_ari, std_ari = stability(spec["build"], X, labels[name])
+        silhouette = score_clustering(X, labels[name])["silhouette"]
         rows.append(
             {
                 "Algorithm": name,
                 "Family": spec["family"],
                 "ARI": mean_ari,
                 "Std": std_ari,
-                "Verdict": (
-                    "solid" if mean_ari > 0.75 else "shaky" if mean_ari > 0.5 else "unreliable"
-                ),
+                "Silhouette": silhouette,
+                "Verdict": stability_verdict(mean_ari, silhouette),
             }
         )
     return pd.DataFrame(rows)
@@ -420,11 +414,12 @@ def segment_action_table(cross_tab: pd.DataFrame) -> pd.DataFrame:
     of things to actually do.
     """
     actions = {
-        ("At Risk", "Premium"): "Urgent: high value, walking out — intervene now",
-        ("At Risk", "High Value"): "Win back with a targeted offer",
+        ("Can't Lose Them", "Premium"): "Urgent: high value, walking out — intervene now",
+        ("Can't Lose Them", "High Value"): "Urgent: personal contact before they are gone",
+        ("At Risk", "Premium"): "Win back with a targeted offer",
+        ("At Risk", "High Value"): "Reactivation offer",
         ("Champions", "Premium"): "Protect: reward and keep them",
         ("Champions", "High Value"): "Protect: loyalty programme",
-        ("Can't Lose Them", "Premium"): "Urgent: personal contact",
         ("Loyal Customers", "Premium"): "Grow: upsell, they can afford it",
         ("Lost", "Low Value"): "Let go — cheapest thing to stop spending on",
         ("Hibernating", "Low Value"): "Low-cost reactivation only",

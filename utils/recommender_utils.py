@@ -31,6 +31,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 from mlxtend.frequent_patterns import apriori, association_rules
 from mlxtend.preprocessing import TransactionEncoder
 
+from utils.teaching import load_sibling_module
+
 # Default location of the sibling repo's datasets (read-only).
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "recommender" / "data"
 
@@ -50,9 +52,29 @@ def load_ratings(data_dir: Path | str = DEFAULT_DATA_DIR) -> pd.DataFrame:
     return pd.read_csv(Path(data_dir) / "movie" / "ratings.csv")
 
 
-def load_groceries(data_dir: Path | str = DEFAULT_DATA_DIR) -> pd.DataFrame:
-    """Load the Groceries market-basket transactions."""
-    return pd.read_csv(Path(data_dir) / "groceries" / "Groceries_dataset.csv")
+def _groceries_module():
+    """The sibling's own loader (``recommender/src/groceries_data.py``)."""
+    return load_sibling_module("recommender", "src/groceries_data.py")
+
+
+def load_groceries() -> tuple[pd.DataFrame, str]:
+    """Return ``(frame, source)`` — the Kaggle Groceries file, or synthetic baskets.
+
+    Imported from the sibling rather than copied: the synthetic generator plants
+    known shopping missions, and the page compares what Apriori finds against
+    exactly those (``planted_missions()``). ``source`` is ``"kaggle"`` or
+    ``"synthetic"`` so the page can say which one the rules came from.
+    """
+    return _groceries_module().load_groceries()
+
+
+def planted_missions() -> pd.DataFrame:
+    """The ground truth behind the synthetic baskets, as a table."""
+    missions = _groceries_module().PLANTED_MISSIONS
+    return pd.DataFrame(
+        [{"Mission": name, "Items bought together": ", ".join(items)}
+         for name, (items, _, _) in missions.items()]
+    )
 
 
 # ===========================================================================
@@ -142,8 +164,15 @@ def user_similarity(user_item_matrix) -> pd.DataFrame:
 
 
 def get_user_based_recommendations(user_id, user_item_matrix, user_sim_df,
-                                   num_recommendations=10, k_neighbors=10):
-    """Similarity-WEIGHTED average of the k most similar users' ratings."""
+                                   num_recommendations=10, k_neighbors=30, min_neighbors=5):
+    """Similarity-WEIGHTED average of the k most similar users' ratings.
+
+    ``min_neighbors``: a movie only one neighbour rated (with 5 stars) would score
+    a perfect 5.0 — the top of the list would fill with obscure films tied at 5.0
+    in arbitrary order. That is the sparsity problem, live. Requiring several
+    neighbours to have rated a movie keeps only recommendations with evidence
+    behind them; ``neighbors_who_rated`` shows how much.
+    """
     similar_users = user_sim_df[user_id].sort_values(ascending=False).iloc[1:k_neighbors + 1]
     neighbor_ratings = user_item_matrix.loc[similar_users.index]
     weights = similar_users.values.reshape(-1, 1)
@@ -153,11 +182,16 @@ def get_user_based_recommendations(user_id, user_item_matrix, user_sim_df,
     rated_mask = neighbor_ratings.notna()
     weighted_sum = (neighbor_ratings.fillna(0) * weights).sum(axis=0)
     weight_totals = (rated_mask * weights).sum(axis=0)
-    scores = weighted_sum / weight_totals.replace(0, np.nan)
+    recs = pd.DataFrame({
+        "score": weighted_sum / weight_totals.replace(0, np.nan),
+        "neighbors_who_rated": rated_mask.sum(axis=0),
+    })
 
     user_rated = user_item_matrix.loc[user_id].dropna().index
-    scores = scores.drop(user_rated, errors="ignore")
-    return scores.nlargest(num_recommendations)
+    recs = recs.drop(user_rated, errors="ignore")
+    recs = recs[recs["neighbors_who_rated"] >= min_neighbors]
+    # Best score first; among equal scores, the one more neighbours vouch for.
+    return recs.sort_values(["score", "neighbors_who_rated"], ascending=False).head(num_recommendations)
 
 
 def build_item_user_sparse(user_item_matrix):
@@ -287,33 +321,43 @@ class MatrixFactorization:
                 on_epoch_end(epoch + 1, rmse(self.predict(users, items), vals))
         return self
 
-    def predict(self, users, items):
-        """Vectorized prediction for arrays of user/item indices."""
+    def predict(self, users, items, clip=True):
+        """Vectorized prediction for arrays of user/item indices.
+
+        ``clip=True`` caps to the 0.5-5 star range — right for RMSE against real
+        ratings. For RANKING use ``clip=False``: a generous rater's favourites can
+        all score above 5, and capping would tie them at 5.0 and lose the order.
+        """
         users = np.asarray(users, dtype=int)
         items = np.asarray(items, dtype=int)
         dot = np.einsum("ij,ij->i", self.p[users], self.q[items])
         preds = self.mu + self.b_u[users] + self.b_i[items] + dot
-        return np.clip(preds, 0.5, 5.0)
+        return np.clip(preds, 0.5, 5.0) if clip else preds
 
 
 def get_mf_recommendations(user_id, model, movies_df, ratings_df,
                            user_to_idx, item_to_idx, idx_to_item, num_recommendations=10):
-    """Top-N unseen movies for ``user_id`` by predicted rating."""
+    """Top-N unseen movies for ``user_id``, ranked on the UNCAPPED model score.
+
+    ``predicted_rating`` is the score capped to the star scale (what a user would
+    see); ``model_score`` is what the ranking actually uses.
+    """
     if user_id not in user_to_idx:
         return f"User '{user_id}' not found in the dataset."
     u = user_to_idx[user_id]
     rated = set(ratings_df[ratings_df["userId"] == user_id]["movieId"])
     candidates = [item_to_idx[m] for m in item_to_idx if m not in rated]
 
-    preds = model.predict(np.full(len(candidates), u), np.array(candidates))
-    top = np.argsort(preds)[::-1][:num_recommendations]
+    scores = model.predict(np.full(len(candidates), u), np.array(candidates), clip=False)
+    top = np.argsort(scores)[::-1][:num_recommendations]
     top_movie_ids = [idx_to_item[candidates[k]] for k in top]
-    pred_by_id = {idx_to_item[candidates[k]]: preds[k] for k in top}
+    score_by_id = {idx_to_item[candidates[k]]: scores[k] for k in top}
 
     recs = movies_df[movies_df["movieId"].isin(top_movie_ids)][["movieId", "title", "genres"]].copy()
-    recs["predicted_rating"] = recs["movieId"].map(pred_by_id)
-    return recs.sort_values("predicted_rating", ascending=False)[
-        ["title", "genres", "predicted_rating"]].reset_index(drop=True)
+    recs["model_score"] = recs["movieId"].map(score_by_id)
+    recs["predicted_rating"] = recs["model_score"].clip(0.5, 5.0)
+    return recs.sort_values("model_score", ascending=False)[
+        ["title", "genres", "predicted_rating", "model_score"]].reset_index(drop=True)
 
 
 # ===========================================================================
@@ -361,14 +405,21 @@ def make_rules(itemsets, min_confidence=0.1) -> pd.DataFrame:
 def get_basket_recommendations(item, rules, top_n=5):
     """Recommend items frequently bought together with ``item``.
 
-    Looks up rules whose antecedent contains the item and returns the consequents,
-    ranked by lift (strength) then confidence (reliability).
+    Uses only rules whose antecedent is EXACTLY ``item`` and whose lift is > 1:
+    in {whole milk, baby food} -> {baby cosmetics} milk is a bystander, and a
+    rule with lift <= 1 is no association at all (or a negative one). Ranked by
+    lift (strength), then confidence (reliability).
     """
     if rules is None or len(rules) == 0:
         return "No association rules available — generate rules first."
-    matches = rules[rules["antecedents"].apply(lambda a: item in a)].copy()
+    single = rules["antecedents"].apply(lambda a: a == frozenset({item}))
+    # Suggest single products: a consequent like {baby food, rolls/buns} just drags a
+    # staple along with the real partner.
+    one_item = rules["consequents"].apply(len) == 1
+    matches = rules[single & one_item & (rules["lift"] > 1)].copy()
     if matches.empty:
-        return f"No rules found with '{item}' on the antecedent side."
+        return (f"No positive association (lift > 1) for '{item}' — it is bought about as "
+                "often with everything as chance predicts. Popular is not the same as related.")
     matches["recommendation"] = matches["consequents"].apply(lambda c: ", ".join(sorted(c)))
     matches = matches.sort_values(["lift", "confidence"], ascending=False)
     matches = matches.drop_duplicates(subset="recommendation")

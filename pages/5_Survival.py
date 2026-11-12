@@ -226,6 +226,7 @@ with tab_overview:
     )
 
     show_source(S.prepare_survival, "🐍 Turning a customer table into survival data")
+    show_source(S.split_survival, "🐍 Split first, then scale (fitted on training customers only)")
     show_source(S.censoring_example, "🐍 The censoring illustration above")
     show_sibling_script("survival.py", "📄 The full sibling script")
 

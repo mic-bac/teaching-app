@@ -16,7 +16,22 @@ Automated tests for the Streamlit teaching app.
   Kaplan-Meier readouts, trains all three models, scores them over time, and
   states that the ranking-only SVM has no survival curve, and the segmentation
   page reacts to its retention-rate slider without reloading the transaction log.
+- **`test_sibling_alignment.py`** — a drift guard for the utils that *re-implement* a
+  sibling script (propensity, survival, recommender). Each hyperparameter is regex-read from
+  the sibling's source and compared with what the app runs. Entries are either `"same"` (the
+  app must match) or `"intentional"` (a recorded live-demo deviation); either way the
+  sibling's value is pinned, so a sibling edit fails here instead of drifting silently. It
+  also checks that the segmentation action table only names segments the sibling's RFM ladder
+  defines. Skips when a sibling repo is not checked out.
+- **`test_deployment.py`** — every sibling the app reads from is listed in `siblings.toml`
+  (https URL, git- and docker-ignored), and the branch rule resolves correctly: app
+  `develop` → sibling `develop`, `main` → `main`, environment variables first.
 - **`test_utils.py`** — unit tests for the shared utilities:
+  - New output-quality guards: user-based CF needs enough neighbours (no 5.0 ties from a
+    single rating), basket suggestions ignore bystander and lift ≤ 1 rules, the synthetic
+    Groceries baskets recover a planted mission while staples stay at lift ≈ 1, the clustering
+    verdict reads stability *and* separation, and the learning-curve reading compares against
+    the best model (high bias) and recognises a flat validation curve.
   - `segmentation_utils` — the CLTV multiplier against the lecture formula and
     its convexity in the retention rate, frequency counted as invoices rather
     than line items, the tenure floor that keeps a one-order customer's

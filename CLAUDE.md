@@ -1,6 +1,6 @@
 # CLAUDE.md — Teaching App
 
-Project-local guide for making changes in the right context. Not committed (gitignored).
+Project-local guide for making changes in the right context (tracked in git).
 
 ## What this is
 
@@ -84,14 +84,16 @@ forecast_models,control_series}.py`), so a future page can **import** the siblin
   `postgres_docker_command`, `architecture_dot`), `io_utils.py`, `recommender_utils.py`,
   `propensity_utils.py` (churn classification; its `load_churn` synthetic fallback is shared
   with), `survival_utils.py` (Kaplan-Meier, Cox/RSF/SVM, censoring-aware metrics),
-  `segmentation_utils.py` (RFM, cohort-measured CLTV, clustering).
+  `segmentation_utils.py` (RFM, cohort-measured CLTV, clustering — imports `segmentation/src/*`
+  incl. `cltv_core`).
 
 - **Two ways a util relates to its sibling.** Most *re-implement* the sibling's logic, because
   `predictions/{propensity,survival}.py` are `# %%` scripts with top-level side effects and
   cannot be imported (the newer `predictions/src/*` modules are pure, and should be imported).
   `segmentation_utils.py` instead **imports** `segmentation/src/*` directly — those modules are
   already pure and importable, so copying them would duplicate the source of truth and
-  guarantee drift. Prefer importing whenever a sibling exposes a clean `src/`; re-implement
+  guarantee drift (the Recommender likewise imports `recommender/src/groceries_data.py`, via
+  `teaching.load_sibling_module`). Prefer importing whenever a sibling exposes a clean `src/`; re-implement
   only when the sibling is a side-effecting script. Either way the util stays Streamlit-free.
 
 ### Teaching patterns to reuse (this is what makes it a *teaching* app)
@@ -110,7 +112,11 @@ forecast_models,control_series}.py`), so a future page can **import** the siblin
 
 ## Testing (required for every change)
 
-- Run with `make test` / `uv run pytest`. Currently 84 tests, all must stay green.
+- Run with `make test` / `uv run pytest`. All tests must stay green (171 as of 2026-11-12).
+- **`tests/test_sibling_alignment.py`** — drift guard: sibling hyperparameters are regex-read and
+  compared with the app. Parameter differences for live-demo runtime are fine but must be
+  recorded there as `"intentional"`; logic differences are not.
+- **Sibling first.** Lesson-content changes start in the sibling repo, then the app follows.
 - **`tests/test_utils.py`** — unit-test every `utils/` helper. Keep them **deterministic**:
   DB tests use a temp **SQLite** file (`create_engine(f"sqlite:///{tmp}")`), never Docker.
 - **`tests/test_app_smoke.py`** — drive each page with `streamlit.testing.v1.AppTest` and
@@ -129,6 +135,22 @@ forecast_models,control_series}.py`), so a future page can **import** the siblin
 5. **`Home.py`** — add an `st.container(border=True)` card + `st.page_link("pages/N_...")`.
 6. **Deps** — `uv add <pkg>`, then `make export-reqs`; update `ENVIRONMENTS.md` status if the
    sibling env changes.
+
+## Deployment & the sibling branch rule
+
+- **Siblings are maintained first, and branches track branches:** app `develop` runs against
+  every sibling's `develop`, app `main` against every sibling's `main` (single-branch siblings
+  like `postgresql` stay on `main`). Merge sibling `develop → main` before or together with
+  the app's `develop → main`. Defined in `siblings.toml`; enforced by `tests/test_deployment.py`.
+- Locally, keep each sibling checked out on the branch matching the app's — check with
+  `make siblings-status`.
+- Railway builds the `Dockerfile`; `scripts/start.sh` clones the siblings **at container
+  start** on the matching branch (from `$RAILWAY_GIT_BRANCH`, override `SIBLING_BRANCH`), plus
+  public data. A sibling-only change therefore needs just a redeploy, no app commit.
+- On Railway, Kaggle datasets are absent → every page needs a synthetic fallback. A new
+  sibling the app reads from must be added to `siblings.toml`.
+- Importing a sibling module: use `utils.teaching.load_sibling_module(repo, "src/x.py")` —
+  several siblings name their package `src`, so plain `from src import` would collide.
 
 ## Git & safety
 
