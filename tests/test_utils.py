@@ -965,6 +965,37 @@ def test_individual_survival_curves_are_labelled_and_monotone():
         assert (group["survival"].diff().dropna() <= 1e-12).all()
 
 
+def test_survival_examples_speak_in_customers():
+    frame = _tiny_churn(400)
+    X, y, _ = survival_utils.prepare_survival(frame)
+    X_train, X_test, y_train, y_test = survival_utils.split_survival(X, y, random_state=42)
+    cox = survival_utils.fit_cox(X_train, y_train)
+
+    example = survival_utils.cindex_example(cox, X_test, y_test)
+    assert "Customer A left after" in example and ("✅" in example or "❌" in example)
+
+    raw = frame.loc[X_test.index]
+    curves = survival_utils.individual_survival_curves(cox, X_test, [0, 1], labels=["Customer 0 — x", "Customer 1 — y"])
+    snapshot = survival_utils.customer_snapshot(raw, y_test, [0, 1], ["Customer 0 — x", "Customer 1 — y"], curves)
+    # Unscaled features: a contract is a word, support calls are whole numbers.
+    assert snapshot["Contract Length"].iloc[0] in {"Monthly", "Quarterly", "Annual"}
+    assert snapshot["What happened"].iloc[0].startswith(("left after", "still a customer"))
+    assert snapshot["Predicted still here at 6m"].ge(snapshot["Predicted still here at 24m"]).all()
+    reading = survival_utils.curve_reading(snapshot)
+    assert reading.count("\n- ") == 1 and "Reality:" in reading and "**Customer 0**" in reading
+    # A ranking-only model gets the profile table without predictions.
+    plain = survival_utils.customer_snapshot(raw, y_test, [0], ["Customer 0"])
+    assert not any(c.startswith("Predicted") for c in plain.columns)
+
+
+def test_median_lifetime_is_the_first_month_at_or_below_half():
+    curves = pd.DataFrame({"time": [1, 2, 3, 1, 2, 3], "survival": [0.9, 0.5, 0.4, 0.9, 0.8, 0.7],
+                           "customer": ["a"] * 3 + ["b"] * 3})
+    median = survival_utils.median_lifetime(curves)
+    assert median["a"] == 2 and pd.isna(median["b"])
+    assert survival_utils.survival_at(curves, 2.5).to_dict() == {"a": 0.5, "b": 0.8}
+
+
 def test_risk_strata_split_the_test_set_and_separate_the_groups():
     frame = _tiny_churn(600)
     X, y, _ = survival_utils.prepare_survival(frame)
@@ -973,6 +1004,8 @@ def test_risk_strata_split_the_test_set_and_separate_the_groups():
     cox = survival_utils.fit_cox(X_train, y_train)
     curves, summary = survival_utils.risk_strata(cox, X_test, y_test)
     assert list(summary["Risk group"]) == ["Low", "Medium", "High", "Very high"]
+    reading = survival_utils.strata_reading(curves, summary)
+    assert "four equal groups" in reading and "*Very high*" in reading
     assert summary["Customers"].sum() == len(y_test)
     # A working model puts more churners in the high-risk groups than the low one.
     assert summary["Observed churn rate"].iloc[-1] > summary["Observed churn rate"].iloc[0]
@@ -1035,13 +1068,92 @@ def test_dataset_roles_covers_the_three_methods():
     assert roles.loc[roles["Method"] == "RFM", "Needs"].iloc[0] == "Transaction log"
 
 
-def test_segmentation_architecture_dot_is_graphviz_and_reports_the_source():
-    dot = segmentation_utils.segmentation_architecture_dot("retail", "kaggle")
+def test_segmentation_architecture_dot_is_graphviz_and_shows_the_missing_link():
+    dot = segmentation_utils.segmentation_architecture_dot()
     assert dot.strip().startswith("digraph")
-    assert "Online Retail II" in dot and "Customer Personality" in dot
-    # A synthetic fallback must be visible in the diagram, not painted over.
-    fallback = segmentation_utils.segmentation_architecture_dot("synthetic", "synthetic")
-    assert "SYNTHETIC" in fallback
+    assert "Transaction log" in dot and "Customer attributes" in dot
+    # The loyalty card is the link a real retailer has and these datasets lack.
+    assert "Loyalty card" in dot and "style=dashed" in dot
+
+
+def test_dataset_roles_blames_the_data_not_transactions_in_general():
+    blind = segmentation_utils.dataset_roles()["Blind to (in this lesson's data)"]
+    assert all("this" in text for text in blind)
+
+
+def test_customer_orders_collapses_lines_into_orders():
+    orders = segmentation_utils.customer_orders(_tiny_transactions(), 1)
+    assert list(orders["Invoice"]) == ["A1", "A2"]
+    assert list(orders["Products"]) == [2, 1]
+    assert orders["Amount"].tolist() == pytest.approx([50.0, 50.0])
+
+
+def test_score_reading_and_example_customer():
+    scored = segmentation_utils.segment_rfm(_tiny_transactions())
+    example = segmentation_utils.example_customer(scored)
+    lines = segmentation_utils.score_reading(scored, example)
+    assert len(lines) == 3 and lines[0].startswith("**R =")
+    cloud = segmentation_utils.rfm_score_cloud(scored, jitter=0.3)
+    # Jitter never pushes a point into the neighbouring score.
+    assert (cloud["R"] - scored["R_Score"]).abs().max() <= 0.3
+    assert cloud.equals(segmentation_utils.rfm_score_cloud(scored, jitter=0.3))  # seeded
+
+
+def test_cohort_reading_quotes_the_first_cohort():
+    matrix = pd.DataFrame(
+        [[1.0, 0.25, 0.2, 0.3, 0.2], [1.0, 0.2, 0.1, np.nan, np.nan]],
+        index=pd.Index(["2010-01", "2010-02"], name="Cohort"),
+    )
+    text = segmentation_utils.cohort_reading(matrix)
+    assert "2010-01" in text and "25%" in text and "30% in month 3" in text
+
+
+def test_clv_year_by_year_sums_to_the_closed_form():
+    years = segmentation_utils.clv_year_by_year(300.0, 0.64, 0.10, years=400)
+    closed = 300.0 * segmentation_utils.clv_multiplier(0.64, 0.10)
+    assert years["Expected value today (€)"].sum() == pytest.approx(closed)
+    assert years["Chance still a customer"].iloc[0] == pytest.approx(0.64)
+
+
+def test_behavioural_retention_maps_recency_onto_the_band_rate():
+    bands = pd.DataFrame(
+        {"RetentionRate": [0.8, 0.5, 0.3]}, index=["0-29d", "30-89d", "90-364d"]
+    )
+    rr = segmentation_utils.behavioural_retention(pd.Series([5, 30, 89, 500]), bands)
+    # 500 days is past the last edge: the last band is stretched to cover it.
+    assert rr.tolist() == pytest.approx([0.8, 0.5, 0.5, 0.3])
+
+
+def test_cluster_sizes_reveal_balanced_and_extreme_algorithms():
+    labels = {
+        "Balanced": np.array([0] * 30 + [1] * 30 + [2] * 40),
+        "Extreme": np.array([0] * 90 + [1] * 5 + [-1] * 5),
+    }
+    sizes = segmentation_utils.cluster_size_frame(labels)
+    for name in labels:
+        assert sizes.loc[sizes["Algorithm"] == name, "Share"].sum() == pytest.approx(1.0)
+    assert "Noise" in set(sizes["Cluster"])
+    balanced, extreme = segmentation_utils.cluster_size_reading(sizes)
+    assert "similar size" in balanced
+    assert "90%" in extreme and "5% unassigned" in extreme
+
+
+def test_describe_cluster_reports_real_values_for_the_strongest_features():
+    profile = pd.Series({"Income": 80532.5, "Age": 44.0, "Total_Children": 0.2})
+    fingerprint = pd.Series({"Income": 1.33, "Age": -0.05, "Total_Children": -1.0})
+    text = segmentation_utils.describe_cluster(profile, fingerprint, top=3)
+    assert "income 80,532 (well above average)" in text
+    assert "children at home 0.2 (well below average)" in text
+    assert "age 44" not in text  # too close to average to mention
+    flat = segmentation_utils.describe_cluster(profile, fingerprint * 0)
+    assert "close to the average" in flat
+
+
+def test_campaign_value_break_even():
+    case = segmentation_utils.campaign_value(pd.Series([100.0, 300.0]), 10.0, 0.25)
+    assert case["cost"] == 20.0 and case["saved"] == pytest.approx(100.0)
+    assert case["net"] == pytest.approx(80.0)
+    assert case["break_even_rate"] == pytest.approx(0.05)
 
 
 def test_clv_multiplier_matches_the_lecture_formula():

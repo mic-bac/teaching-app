@@ -138,58 +138,49 @@ def dataset_roles() -> pd.DataFrame:
 
     Segmentation methods do not all want the same data. RFM and CLTV need *dated
     transactions* — you cannot compute a recency without a date, or measure a
-    retention rate without observing the same person twice. Clustering needs
-    *customer attributes* — a till receipt records a price and a product code,
-    never an age, so no volume of transaction data will ever tell you a segment
-    is "affluent households without children".
+    retention rate without observing the same person twice. Clustering on "who
+    the customer is" needs *customer attributes*.
 
-    Teaching this as a table beats asserting it: the empty cells are the lesson.
+    The "Blind to" column describes **these two datasets**, not transaction data
+    in general: a retailer with a loyalty-card programme links receipts to
+    demographics through the card, and that joined table could feed all three
+    methods. The two public datasets used here are simply not linked.
     """
     return pd.DataFrame(
         [
             ("RFM", "Transaction log", "Dated purchases per customer",
-             "Cannot see who the customer is"),
+             "No age, income or household in this log"),
             ("CLTV", "Transaction log", "Repeat observation over time, for retention",
-             "Cannot see who the customer is"),
+             "No age, income or household in this log"),
             ("Clustering", "Customer attributes", "Demographics + behaviour per customer",
-             "Cannot see when anything happened"),
+             "No dated purchases in this table"),
         ],
-        columns=["Method", "Needs", "Because", "Blind to"],
+        columns=["Method", "Needs", "Because", "Blind to (in this lesson's data)"],
     )
 
 
-def segmentation_architecture_dot(
-    data_source: str = "retail", personality_source: str = "kaggle"
-) -> str:
+def segmentation_architecture_dot() -> str:
     """A Graphviz DOT diagram of the lesson's data flow.
 
     ``st.graphviz_chart`` renders a raw DOT string client-side, so this needs no
-    Graphviz Python package. Colours reflect which data source is actually live,
-    so the diagram tells the truth about a synthetic fallback rather than drawing
-    a picture of the happy path regardless.
+    Graphviz Python package. The dashed node is the bridge a real retailer often
+    has and this lesson does not: a loyalty card (or CRM login) that ties each
+    receipt to a person, so one joined table could feed all three methods.
     """
-    retail_colour = "#2E7D32" if data_source == "retail" else "#EF6C00"
-    retail_label = (
-        "Online Retail II\\n1.07M invoice lines" if data_source == "retail"
-        else "SYNTHETIC\\ntransaction log"
-    )
-    personality_colour = "#2E7D32" if personality_source == "kaggle" else "#EF6C00"
-    personality_label = (
-        "Customer Personality\\n2,240 customers" if personality_source == "kaggle"
-        else "SYNTHETIC\\ncustomer attributes"
-    )
-
-    return f"""
-digraph segmentation {{
+    return """
+digraph segmentation {
   rankdir=LR;
   node [shape=box style="rounded,filled" fontname="Helvetica" fontsize=10];
   edge [fontname="Helvetica" fontsize=9 color="#616161"];
 
-  subgraph cluster_data {{
-    label="Data"; style=dashed; color="#BDBDBD"; fontname="Helvetica"; fontsize=10;
-    tx    [label="{retail_label}" fillcolor="{retail_colour}" fontcolor=white];
-    attrs [label="{personality_label}" fillcolor="{personality_colour}" fontcolor=white];
-  }}
+  subgraph cluster_data {
+    label="This lesson's data"; style=dashed; color="#BDBDBD"; fontname="Helvetica"; fontsize=10;
+    tx    [label="Transaction log\\nwho bought what, when" fillcolor="#2E7D32" fontcolor=white];
+    attrs [label="Customer attributes\\nage, income, household" fillcolor="#2E7D32" fontcolor=white];
+  }
+
+  card [label="Loyalty card / CRM\\nlinks receipts to people\\n(not available here)"
+        style="rounded,dashed" color="#757575" fontcolor="#616161"];
 
   clean [label="clean + B2C filter\\nsrc/retail_data.py" fillcolor="#ECEFF1"];
   agg   [label="aggregate to customers\\nbuild_rfm()" fillcolor="#ECEFF1"];
@@ -205,11 +196,140 @@ digraph segmentation {{
   agg -> rfm;
   agg -> cltv [label="cohort retention"];
   attrs -> scale -> clus;
+  tx -> card [style=dashed dir=none color="#9E9E9E"];
+  card -> attrs [style=dashed dir=none color="#9E9E9E" label="join on\\ncustomer ID"];
   rfm -> action;
   cltv -> action;
   clus -> action [label="a description\\nyou can brief"];
-}}
+}
 """
+
+
+# ===========================================================================
+# Worked examples — one customer at a time, so the numbers have a face
+# ===========================================================================
+
+
+def customer_orders(transactions: pd.DataFrame, customer_id) -> pd.DataFrame:
+    """One customer's purchase history, one row per order (invoice).
+
+    The raw log has one row per *product line*; RFM counts *orders*. Showing the
+    collapsed table next to the R, F and M it produces is the clearest way to
+    show where the three numbers come from.
+    """
+    rows = transactions[transactions["Customer ID"] == customer_id]
+    orders = (
+        rows.groupby("Invoice")
+        .agg(Date=("InvoiceDate", "max"), Products=("Invoice", "size"), Amount=("Revenue", "sum"))
+        .sort_values("Date")
+        .reset_index()
+    )
+    orders["Date"] = orders["Date"].dt.date
+    return orders
+
+
+def example_customer(scored: pd.DataFrame, min_orders: int = 3, max_orders: int = 6) -> pd.Series:
+    """A readable example: a recent Champion with a handful of orders.
+
+    Deterministic (lowest ID that fits), so the worked example does not change
+    between reruns; falls back to the median-frequency customer on odd data.
+    """
+    fits = scored[
+        scored["Frequency"].between(min_orders, max_orders) & (scored["Segment"] == "Champions")
+    ]
+    if fits.empty:
+        fits = scored[scored["Frequency"] == scored["Frequency"].median()]
+    if fits.empty:
+        fits = scored
+    return fits.sort_values("Id").iloc[0]
+
+
+def score_reading(scored: pd.DataFrame, customer: pd.Series) -> list[str]:
+    """Explain one customer's three scores as ranks against everyone else.
+
+    The 1-5 score is a rank, not an amount, so the honest explanation is "better
+    than X% of customers", which is computed here for each dimension.
+    """
+    recent_share = (scored["Recency"] > customer["Recency"]).mean()
+    frequent_share = (scored["Frequency"] < customer["Frequency"]).mean()
+    spend_share = (scored["Monetary"] < customer["Monetary"]).mean()
+    return [
+        f"**R = {customer['R_Score']:.0f}**: last order {customer['Recency']:.0f} days ago — more "
+        f"recent than {recent_share:.0%} of customers.",
+        f"**F = {customer['F_Score']:.0f}**: {customer['Frequency']:.0f} orders — more than "
+        f"{frequent_share:.0%} of customers.",
+        f"**M = {customer['M_Score']:.0f}**: €{customer['Monetary']:,.0f} spent — more than "
+        f"{spend_share:.0%} of customers.",
+    ]
+
+
+def rfm_score_cloud(scored: pd.DataFrame, jitter: float = 0.3, seed: int = 0) -> pd.DataFrame:
+    """R/F/M *scores* with a little random jitter, for a readable 3D scatter.
+
+    On the raw values the cloud is a smear: spend runs from €3 to €41,000 and
+    most customers sit in one corner. On the 1-5 scores every customer lands on
+    one of 125 grid points — so thousands overlap exactly. A small, seeded jitter
+    spreads each grid point into a little ball, and the segments show up as
+    blocks of the cube.
+    """
+    rng = np.random.default_rng(seed)
+    cloud = scored[["Id", "Segment", "Recency", "Frequency", "Monetary"]].copy()
+    for score, axis in [("R_Score", "R"), ("F_Score", "F"), ("M_Score", "M")]:
+        cloud[axis] = scored[score].astype(float) + rng.uniform(-jitter, jitter, len(scored))
+    return cloud
+
+
+def cohort_reading(matrix: pd.DataFrame) -> str:
+    """One row of the cohort heatmap read aloud, using the first full cohort."""
+    cohort = matrix.index[0]
+    row = matrix.iloc[0]
+    month_one, month_three = row.iloc[1], row.iloc[3]
+    later = row.iloc[1:13].dropna()
+    return (
+        f"Read the top row: of everyone whose **first** order was in {cohort}, "
+        f"{month_one:.0%} ordered again the next month and {month_three:.0%} in month 3. "
+        f"Over the first year it hovers between {later.min():.0%} and {later.max():.0%} each "
+        "month — not the same people every month, but a steady core that keeps coming back."
+    )
+
+
+def clv_year_by_year(gc: float, retention_rate: float, discount_rate: float,
+                     years: int = 5) -> pd.DataFrame:
+    """The lifetime-value formula unrolled year by year, for one customer.
+
+    Year t contributes ``GC * Rr**t / (1+d)**t``: the contribution, times the
+    chance they are still a customer, shrunk to today's money. Summing *every*
+    year gives exactly ``GC * Rr / (1 - Rr + d)`` — the closed form on the
+    slide. Showing the first few rows makes the formula a story instead of a
+    fraction.
+    """
+    t = np.arange(1, years + 1)
+    still_here = retention_rate ** t
+    today_factor = 1 / (1 + discount_rate) ** t
+    return pd.DataFrame(
+        {
+            "Year": t,
+            "Chance still a customer": still_here,
+            "€1 then is worth today": today_factor,
+            "Expected value today (€)": gc * still_here * today_factor,
+        }
+    )
+
+
+def behavioural_retention(recency: pd.Series, band_retention: pd.DataFrame) -> pd.Series:
+    """Give each customer the retention rate measured for their recency band.
+
+    Mirrors ``segmentation/cltv.py`` section 7: the band edges are read back off
+    the measured table (labels like ``"30-89d"``), so the two cannot drift
+    apart, and the last band is stretched to cover today's longest-quiet
+    customer.
+    """
+    edges = [0] + [int(label.split("-")[1].rstrip("d")) + 1 for label in band_retention.index]
+    edges[-1] = max(edges[-1], int(recency.max()) + 1)
+    return pd.cut(
+        recency, bins=edges, labels=band_retention["RetentionRate"].to_numpy(), right=False,
+        ordered=False,
+    ).astype(float)
 
 
 # ===========================================================================
@@ -434,3 +554,104 @@ def segment_action_table(cross_tab: pd.DataFrame) -> pd.DataFrame:
                 rows.append({"RFM segment": segment, "CLTV tier": str(tier),
                              "Customers": count, "Recommended action": action})
     return pd.DataFrame(rows).sort_values("Customers", ascending=False).reset_index(drop=True)
+
+
+# ===========================================================================
+# Clustering — sizes and plain-language profiles
+# ===========================================================================
+
+FEATURE_LABELS = {
+    "Income": ("income", "{:,.0f}"),
+    "Age": ("age", "{:.0f}"),
+    "Total_Children": ("children at home", "{:.1f}"),
+    "Total_Spending": ("spend over two years", "{:,.0f}"),
+    "Total_Purchases": ("purchases", "{:.0f}"),
+    "Total_Campaigns_Accepted": ("campaigns accepted (of 5)", "{:.1f}"),
+    "NumWebVisitsMonth": ("web visits a month", "{:.1f}"),
+}
+
+
+def cluster_size_frame(labels: dict) -> pd.DataFrame:
+    """Cluster sizes per algorithm, as shares — one row per (algorithm, cluster).
+
+    Sorted largest first within each algorithm so a stacked bar reads left to
+    right from the biggest group, and DBSCAN's noise (``-1``) is kept as its own
+    "Noise" bar rather than hidden.
+    """
+    rows = []
+    for name, lab in labels.items():
+        counts = pd.Series(lab).value_counts()
+        noise = counts.pop(-1) if -1 in counts.index else 0
+        for rank, (cluster, n) in enumerate(counts.sort_values(ascending=False).items()):
+            rows.append({"Algorithm": name, "Cluster": f"Cluster {cluster}", "Rank": rank,
+                         "Customers": int(n), "Share": n / len(lab)})
+        if noise:
+            rows.append({"Algorithm": name, "Cluster": "Noise", "Rank": len(counts),
+                         "Customers": int(noise), "Share": noise / len(lab)})
+    return pd.DataFrame(rows)
+
+
+def cluster_size_reading(sizes: pd.DataFrame) -> list[str]:
+    """One plain sentence per algorithm: how balanced are its groups?"""
+    lines = []
+    for name, group in sizes.groupby("Algorithm", sort=False):
+        clusters = group[group["Cluster"] != "Noise"]
+        largest, smallest = clusters["Share"].max(), clusters["Share"].min()
+        noise = group.loc[group["Cluster"] == "Noise", "Share"].sum()
+        noise_text = f", and leaves {noise:.0%} unassigned as noise" if noise else ""
+        if largest >= 0.6:
+            shape = f"one giant group holds {largest:.0%} of customers"
+        elif largest / smallest <= 4:
+            shape = "groups of broadly similar size"
+        else:
+            shape = f"very uneven groups ({largest:.0%} down to {smallest:.1%})"
+        lines.append(f"**{name}**: {len(clusters)} clusters — {shape}{noise_text}.")
+    return lines
+
+
+def describe_cluster(profile: pd.Series, fingerprint: pd.Series, top: int = 3) -> str:
+    """A cluster in plain words: its most distinctive features, with real values.
+
+    Picks the ``top`` features furthest from average (by z-score) and reports the
+    cluster's actual average next to "above/below average", which is what a
+    marketer can use — "income 80,500, well above average" — rather than "+1.33".
+    """
+    strongest = fingerprint.abs().sort_values(ascending=False).index[:top]
+    parts = []
+    for feature in strongest:
+        z = fingerprint[feature]
+        if abs(z) < 0.3:
+            continue
+        label, fmt = FEATURE_LABELS.get(feature, (feature, "{:.1f}"))
+        size = "well " if abs(z) >= 1 else ""
+        direction = "above" if z > 0 else "below"
+        parts.append(f"{label} {fmt.format(profile[feature])} ({size}{direction} average)")
+    return "; ".join(parts) if parts else "close to the average customer on everything"
+
+
+# ===========================================================================
+# Acting on it — the business case for one campaign
+# ===========================================================================
+
+
+def campaign_value(future_value: pd.Series, cost_per_customer: float,
+                   success_rate: float) -> dict:
+    """Is a retention campaign for this group worth it? Expected value in euros.
+
+    ``future_value`` is each customer's expected future contribution
+    (GC × multiplier — the acquisition cost is already spent, so it is left
+    out). If the campaign keeps ``success_rate`` of customers who would
+    otherwise have left, it saves that share of the group's future value, and
+    costs ``cost_per_customer`` for everyone contacted.
+    """
+    customers = len(future_value)
+    cost = customers * cost_per_customer
+    saved = success_rate * float(future_value.sum())
+    return {
+        "customers": customers,
+        "cost": cost,
+        "saved": saved,
+        "net": saved - cost,
+        "return_per_euro": saved / cost if cost else float("nan"),
+        "break_even_rate": cost / float(future_value.sum()) if future_value.sum() else float("nan"),
+    }

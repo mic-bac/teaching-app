@@ -164,6 +164,10 @@ instead of the lesson.
   `teaching.load_sibling_module`): `load_groceries` returns `(frame, source)` and
   `PLANTED_MISSIONS` maps mission → (items, p_core, share); the page's planted-missions table
   and synthetic-data notice depend on both.
+- **`segmentation_utils.behavioural_retention`** re-implements the per-customer retention mapping
+  of `segmentation/cltv.py` section 7 (band edges read back off `retention_by_recency_band`'s
+  labels, last band stretched to today's maximum recency) — script code, so it cannot be
+  imported; check the two mappings still agree.
 - **`stability_verdict`** (segmentation `clustering_core`) is used by both `clustering.py` and the
   app's `stability_frame` — the verdict wording must come from the sibling, not be re-typed.
 - **`utils/forecasting_utils.py` ↔ `predictions/src/{sales_data,ts_core,forecast_models,

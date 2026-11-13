@@ -238,6 +238,11 @@ def test_survival_page_trains_models_and_scores_them_over_time():
     assert not at.exception, f"survival scoring raised: {[str(e) for e in at.exception]}"
     # The ranking-only model must explain itself rather than invent a Brier score.
     assert any("Survival SVM" in w.value for w in at.warning)
+    # The c-index comes with a real pair of test customers.
+    assert any("Customer A left after" in m.value for m in at.markdown)
+    # The curves tab names the customers behind the lines and the strata behind the fan.
+    assert any("customer by customer" in m.value for m in at.markdown)
+    assert any("four equal groups" in m.value for m in at.markdown)
 
 
 def test_survival_page_score_only_model_has_no_curves():
@@ -267,6 +272,16 @@ def test_segmentation_page_reacts_to_the_retention_slider():
     assert not at.exception, [str(e) for e in at.exception]
     # Customer equity is reported as a metric and must survive the change.
     assert any("equity" in m.label.lower() for m in at.metric)
+    # Worked examples: one customer's orders become R, F and M; the CLTV formula is
+    # computed for one customer; cluster sizes are compared; a campaign is costed.
+    texts = " ".join(m.value for m in at.markdown)
+    assert "orders" in texts and "**R =" in texts
+    assert "Worked example" in texts
+    assert "clusters —" in texts and "Profiles of the **K-Means** clusters" in texts
+    assert any(m.label == "Net effect" for m in at.metric)
+    assert any(r.label == "Axes" for r in at.radio)
+    at = at.radio[0].set_value("Raw values (log scale)").run()
+    assert not at.exception, [str(e) for e in at.exception]
 
 
 def test_time_series_page_reproduces_the_slide_and_fits_sarima():

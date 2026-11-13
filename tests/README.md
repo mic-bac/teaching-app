@@ -35,8 +35,11 @@ Automated tests for the Streamlit teaching app.
   - `segmentation_utils` — the CLTV multiplier against the lecture formula and
     its convexity in the retention rate, frequency counted as invoices rather
     than line items, the tenure floor that keeps a one-order customer's
-    annualised contribution finite, and cohort frames that keep unobserved
-    periods missing instead of silently reading them as zero retention.
+    annualised contribution finite, cohort frames that keep unobserved
+    periods missing instead of silently reading them as zero retention, the
+    year-by-year CLTV table summing to the closed form, per-band retention
+    mapping, cluster-size readings (balanced vs extreme) and the campaign
+    break-even maths.
   - `forecasting_utils` — the slides' Excel smoothing example reproduced exactly (MAE 10.20,
     MSE 184.89, RMSE 13.60 at α = 0.4), rolling-origin folds that only move forward, every
     Christmas lying before the first week a 52-week model can be tested on, the promotion

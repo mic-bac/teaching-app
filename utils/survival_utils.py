@@ -53,6 +53,8 @@ MODEL_TABLE = [
         "Strength": "Interpretable hazard ratios per feature",
         "Limitation": "Bound to the proportional-hazards assumption",
         "Gives S(t)?": "Yes",
+        "In plain words": "Learns one factor per feature that raises or lowers the risk of leaving "
+                          "at every moment — a rule like \"a monthly contract doubles the risk\".",
     },
     {
         "Model": "Random Survival Forest",
@@ -60,6 +62,9 @@ MODEL_TABLE = [
         "Strength": "Captures non-linear effects, few assumptions",
         "Limitation": "Harder to interpret",
         "Gives S(t)?": "Yes",
+        "In plain words": "Hundreds of decision trees sort customers into groups (\"monthly contract "
+                          "and many support calls\") and note how long such groups stay; the forest "
+                          "averages their answers.",
     },
     {
         "Model": "Survival SVM",
@@ -67,6 +72,8 @@ MODEL_TABLE = [
         "Strength": "Complex, non-linear relations via kernels",
         "Limitation": "Outputs a score only — rank customers, do not calibrate them",
         "Gives S(t)?": "No",
+        "In plain words": "Learns only *who leaves before whom* — like ranking runners by finishing "
+                          "order without timing them.",
     },
 ]
 
@@ -262,6 +269,45 @@ def c_index(model, X, y) -> float:
     return float(concordance_index_censored(y["event"], y["time"], model.predict(X))[0])
 
 
+def cindex_example(model, X, y) -> str:
+    """The c-index made concrete: one pair the model orders right, one it gets wrong.
+
+    A pair counts when we know who left first: customer A churned at month a and
+    customer B was still with us after a (churned later, or still active).
+    """
+    risk = np.asarray(model.predict(X))
+    events, times = y["event"], y["time"]
+    right = wrong = None
+    for a in np.argsort(times):
+        if not events[a]:
+            continue
+        later = np.flatnonzero(times > times[a] + 6)  # clearly later, so the example is obvious
+        for b in later[:50]:
+            if right is None and risk[a] > risk[b]:
+                right = (a, b)
+            if wrong is None and risk[a] < risk[b]:
+                wrong = (a, b)
+        if right and wrong:
+            break
+
+    def months(value):
+        return f"{value:.0f} month{'' if round(value) == 1 else 's'}"
+
+    def pair(a, b, verdict):
+        status = "left" if events[b] else "was still a customer"
+        return (f"Customer A left after **{months(times[a])}**; customer B {status} at "
+                f"**{months(times[b])}**. So A should get the higher risk score. The model gave A "
+                f"**{risk[a]:.2f}** and B **{risk[b]:.2f}** — {verdict}")
+
+    lines = []
+    if right:
+        lines.append("- " + pair(*right, "✅ ordered right."))
+    if wrong:
+        lines.append("- " + pair(*wrong, "❌ ordered wrong."))
+    lines.append("\n(Risk scores have no unit — only which one is higher matters.)")
+    return "\n".join(lines)
+
+
 def evaluation_window(y_train: np.ndarray, y_test: np.ndarray, n_times: int = 9):
     """Pick the times at which AUC(t) and the Brier score can be estimated.
 
@@ -332,6 +378,77 @@ def individual_survival_curves(model, X, indices, labels=None) -> pd.DataFrame |
         label = labels[position] if labels is not None else f"Customer {index}"
         curves.append(pd.DataFrame({"time": function.x, "survival": function.y, "customer": label}))
     return pd.concat(curves, ignore_index=True)
+
+
+def survival_at(curves: pd.DataFrame, month: float) -> pd.Series:
+    """Per customer: predicted share still a customer at ``month`` (step function)."""
+    return curves[curves["time"] <= month].groupby("customer", sort=False)["survival"].last()
+
+
+def median_lifetime(curves: pd.DataFrame) -> pd.Series:
+    """Per customer: first month where the predicted survival falls to 50 % (NaN if never)."""
+    below = curves[curves["survival"] <= 0.5]
+    first = below.groupby("customer", sort=False)["time"].min()
+    return first.reindex(curves["customer"].unique())
+
+
+PROFILE_COLUMNS = ["Contract Length", "Subscription Type", "Support Calls", "Payment Delay",
+                   "Usage Frequency", "Total Spend"]
+
+
+def customer_snapshot(raw: pd.DataFrame, y, positions, labels, curves=None,
+                      months=(6, 12, 24)) -> pd.DataFrame:
+    """The customers behind the curves: who they are, what was predicted, what happened.
+
+    ``raw`` holds the unscaled rows of the same customers (in the same order as
+    ``y``), so the table speaks in contracts and support calls, not z-scores.
+    """
+    frame = raw.iloc[list(positions)][PROFILE_COLUMNS].reset_index(drop=True)
+    frame.insert(0, "Customer", labels)
+    frame["What happened"] = [
+        f"left after {y['time'][i]:.0f} months" if y["event"][i]
+        else f"still a customer at {y['time'][i]:.0f} months"
+        for i in positions
+    ]
+    if curves is not None:
+        for month in months:
+            frame[f"Predicted still here at {month}m"] = survival_at(curves, month).values
+        frame["Predicted median lifetime (months)"] = median_lifetime(curves).values
+    return frame
+
+
+def curve_reading(snapshot: pd.DataFrame, month: int = 12) -> str:
+    """One plain sentence per customer: the prediction next to what really happened."""
+    lines = []
+    for _, row in snapshot.iterrows():
+        median = row["Predicted median lifetime (months)"]
+        when = f"half-way point at **{median:.0f} months**" if pd.notna(median) else "never drops below 50 %"
+        lines.append(
+            f"- **{row['Customer'].split(' —')[0]}** ({row['Contract Length'].lower()} contract, "
+            f"{row['Support Calls']:.0f} support calls, {row['Payment Delay']:.0f} days payment delay): "
+            f"**{row[f'Predicted still here at {month}m']:.0%}** chance of still being here after {month} "
+            f"months, {when}. Reality: {row['What happened']}."
+        )
+    return "\n".join(lines)
+
+
+def strata_reading(curves: pd.DataFrame, summary: pd.DataFrame, month: int = 12) -> str:
+    """The risk-strata chart in words: how groups are built, and how far they fan out."""
+    still = curves[curves["time"] <= month].groupby("risk_group")["survival"].last()
+    low, top = summary.iloc[0], summary.iloc[-1]
+    return (
+        f"**How it is built:** the model gives each of the {int(summary['Customers'].sum()):,} test "
+        f"customers a risk score. We sort them and cut the list into four equal groups of about "
+        f"{int(low['Customers']):,}: the quarter the model finds safest is *Low*, the riskiest quarter "
+        "*Very high*. Then each group's line shows what **really** happened to it (Kaplan-Meier, not a "
+        "prediction).\n\n"
+        f"**How to read it:** after {month} months, **{still.get(low['Risk group'], float('nan')):.0%}** of "
+        f"the *Low* group are still customers, against **{still.get(top['Risk group'], float('nan')):.0%}** "
+        f"of the *Very high* group. In the table, {low['Observed churn rate']:.0%} of *Low* have left so "
+        f"far vs {top['Observed churn rate']:.0%} of *Very high*. The wider the lines fan out, the better "
+        "the model separates — and the steepest early drop shows *when* to call the riskiest group: before "
+        "it happens."
+    )
 
 
 def cox_coefficients(model, feature_names) -> pd.DataFrame:
