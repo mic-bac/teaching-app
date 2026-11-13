@@ -51,13 +51,7 @@ def show_sibling_script(filename: str, label: str) -> None:
 
 def _rules_network(rules: pd.DataFrame, top_n: int = 10) -> go.Figure:
     """A simple circular network of the top rules by lift (items = nodes)."""
-    top = rules.nlargest(top_n, "lift")
-    edges = [
-        (a, c, row["lift"])
-        for _, row in top.iterrows()
-        for a in row["antecedents"]
-        for c in row["consequents"]
-    ]
+    edges = R.rule_edges(rules, top_n)
     nodes = sorted({n for a, c, _ in edges for n in (a, c)})
     pos = {
         n: (np.cos(2 * np.pi * k / len(nodes)), np.sin(2 * np.pi * k / len(nodes)))
@@ -111,6 +105,11 @@ def cached_tfidf():
 
 
 @st.cache_resource(show_spinner=False)
+def cached_genre_map():
+    return PCA(n_components=2).fit_transform(cached_tfidf()[1].toarray())
+
+
+@st.cache_resource(show_spinner=False)
 def cached_user_item():
     return R.build_user_item_matrix(cached_ratings(), cached_movies())
 
@@ -138,6 +137,11 @@ def cached_baseline():
     mu, b_u, b_i = R.fit_baseline(train, len(u2i), len(i2i))
     test_rmse = R.rmse(R.predict_baseline(mu, b_u, b_i, test[:, 0], test[:, 1]), test[:, 2])
     return mu, b_u, b_i, test_rmse
+
+
+@st.cache_data(show_spinner=False)
+def cached_rating_grid():
+    return R.rating_grid(cached_ratings(), cached_movies())
 
 
 @st.cache_data(show_spinner=False)
@@ -258,15 +262,26 @@ involved, so this works even for brand-new movies.
     default = titles.index("Toy Story (1995)") if "Toy Story (1995)" in titles else 0
     choice = st.selectbox("Pick a movie you liked", titles, index=default)
 
+    choice_genres = movies.loc[int(title_to_idx[choice]), "genres"]
+    st.markdown(f"Its genres: **{', '.join(sorted(R.genre_set(choice_genres)))}**")
+
     recs = R.get_recommendations(choice, tfidf, movies, title_to_idx, top_n=10)
     if isinstance(recs, str):
         st.warning(recs)
     else:
+        recs.insert(2, "shared genres", recs["genres"].map(lambda g: R.shared_genres(choice_genres, g)))
         st.markdown(f"**Because you liked _{choice}_, you might also like:**")
         st.dataframe(
             recs.style.format({"similarity": "{:.3f}"}),
             width="stretch",
             hide_index=True,
+        )
+        st.caption(
+            "**How to read it:** similarity **1.000** means exactly the same genres. Missing one "
+            "genre costs more when that genre is rare. For *Toy Story*, a movie without "
+            "*Animation* (rare) scores **0.86**, one without *Comedy* (common) **0.96**. That is "
+            "TF-IDF at work: rare genres say more about a movie, so they weigh more. *Extra* "
+            "genres also lower the score (adding *Musical* → 0.86)."
         )
         ils = R.intra_list_similarity(list(recs["title"]), tfidf, title_to_idx)
         st.metric("Intra-list similarity (diversity)", f"{ils:.3f}")
@@ -307,15 +322,43 @@ involved, so this works even for brand-new movies.
         st.info("Pick at least one favorite to build a profile.")
 
     with st.expander("🗺️ Show a 2D genre map (PCA of the TF-IDF vectors)"):
-        pca = PCA(n_components=2)
-        coords = pca.fit_transform(tfidf.toarray())
+        st.markdown(
+            "Every movie is a dot; movies with similar genres sit close together. The axes have no "
+            "unit — only distance matters. Movies with **exactly the same genres land on the same "
+            "spot**, so one dot can hide many movies. Highlight a few movies, or whole genres:"
+        )
+        coords = cached_genre_map()
         plot_df = pd.DataFrame({"x": coords[:, 0], "y": coords[:, 1],
                                 "title": movies["title"], "genres": movies["genres"]})
-        plot_df["highlight"] = np.where(plot_df["title"] == choice, choice, "other movies")
+        mode = st.radio("Highlight", ["Movies", "Genres"], horizontal=True, key="map_mode")
+        if mode == "Movies":
+            picked = st.multiselect(
+                "Movies to highlight", titles,  # no key: follows the movie picked above
+                default=[choice] + (list(recs["title"][:3]) if not isinstance(recs, str) else []),
+            )
+            plot_df["highlight"] = np.where(plot_df["title"].isin(picked), plot_df["title"], "other movies")
+            st.caption(
+                f"Example: *{choice}* and its top recommendations sit on or right next to each "
+                "other — that closeness *is* their high similarity."
+            )
+        else:
+            picked = st.multiselect("Genres to highlight", R.all_genres(movies),
+                                    default=["Comedy", "Drama"], key="map_genres")
+            plot_df["highlight"] = R.genre_highlight(movies, picked)
+            st.caption(
+                "Example: comedies sit on the right, dramas on the left, and movies that are both "
+                "(*Comedy + Drama*) in between. Two axes can only keep about a third of the genre "
+                "information, so smaller genres (try *Horror* and *Sci-Fi*) overlap on this map "
+                "even when the movies share no genre at all — the table above is the exact answer, "
+                "the map is a rough overview."
+            )
+        # Grey first, so the highlighted dots are drawn on top.
+        plot_df = plot_df.sort_values("highlight", key=lambda h: ~h.isin(["other movies", "other"]))
+        grey = {"other movies": "#cfd8dc", "other": "#cfd8dc"}
         fig = px.scatter(
             plot_df, x="x", y="y", color="highlight",
             hover_name="title", hover_data=["genres"],
-            color_discrete_map={choice: "#e53935", "other movies": "#b0bec5"},
+            color_discrete_map=grey,
             title="Movies arranged by genre similarity (TF-IDF → PCA)",
         )
         fig.update_layout(legend_title_text="")
@@ -400,17 +443,28 @@ methods find the nearest *neighbors* by cosine similarity:
 # ===========================================================================
 with tab_mf:
     st.header("Collaborative Filtering — Matrix Completion")
-    st.markdown(
-        """
-The rating matrix is mostly **empty** — most people rate few movies. *Matrix
-completion* fills the blanks. We build it in two steps, exactly as in the lecture.
-"""
-    )
-
     _, train, test, u2i, i2i, i2it = cached_encoded()
     ratings = cached_ratings()
     movies = cached_movies()
     mu, b_u, b_i, base_rmse = cached_baseline()
+    mean_rmse = R.rmse(np.full(len(test), mu), test[:, 2])
+    grid = cached_rating_grid()
+
+    st.markdown(
+        """
+**The problem.** Here is a small corner of the rating matrix: six users, the five most-rated
+movies. Most cells are empty — nobody rates everything. *Matrix completion* means: **predict the
+empty cells**. The movies a user would rate highest become their recommendations.
+"""
+    )
+    st.dataframe(grid.style.format("{:.1f}", na_rep="?"), width="stretch")
+    st.markdown(
+        """
+We build the prediction in two steps and grade each one the same way: hide **25 %** of the
+known ratings, learn from the rest, then check how far off the predictions for the hidden ones
+are. That error is the **RMSE** — *"on average, off by this many stars"*. Lower is better.
+"""
+    )
 
     # ---- Step 1: the bias baseline --------------------------------------
     st.subheader("Step 1 · Bias-corrected baseline")
@@ -421,9 +475,7 @@ The simplest sensible guess corrects for two biases:
 $$\hat{r}(u,i) = \mu + b_u + b_i$$
 
 In words: **predicted rating = the average rating + "this user rates generously (or
-strictly)" + "this movie is loved (or panned)"**. μ is the overall average, bᵤ the user's
-habit, bᵢ the movie's reputation. Robust and easy to read — but every user gets the *same*
-ranking, just shifted. Pick a user and a movie to see the pieces:
+strictly)" + "this movie is loved (or panned)"**. Pick a user and a movie to see the pieces:
 """
     )
     c1, c2 = st.columns(2)
@@ -439,13 +491,18 @@ ranking, just shifted. Pick a user and a movie to see the pieces:
         u_idx, i_idx = u2i[demo_user], i2i[demo_movie_id]
         pred = float(np.clip(mu + b_u[u_idx] + b_i[i_idx], 0.5, 5.0))
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Global μ", f"{mu:.2f}")
+        m1.metric("Average rating μ", f"{mu:.2f}")
         m2.metric("User bias bᵤ", f"{b_u[u_idx]:+.2f}")
         m3.metric("Movie bias bᵢ", f"{b_i[i_idx]:+.2f}")
         m4.metric("Predicted rating", f"{pred:.2f}")
     else:
         st.info("That movie has no ratings, so it has no learned bias — pick another.")
-    st.caption(f"Baseline test-set RMSE: **{base_rmse:.4f}** (lower is better).")
+    st.markdown(
+        f"**Grade:** always guessing the average would be off by **{mean_rmse:.2f}** stars; the "
+        f"baseline is off by **{base_rmse:.2f}**. A big step for two simple corrections. "
+        "**Its weakness:** μ and bᵤ are the same for every movie of one user, so only bᵢ decides "
+        "the *order* — every user gets **the same list** of recommendations."
+    )
 
     st.divider()
 
@@ -453,16 +510,20 @@ ranking, just shifted. Pick a user and a movie to see the pieces:
     st.subheader("Step 2 · Matrix factorization (learned taste)")
     st.markdown(
         r"""
-The baseline knows *who rates high* and *what's popular*, but not individual taste.
-Matrix factorization adds a short **latent-factor** vector to each user and movie:
+Matrix factorization adds what the baseline lacks — **individual taste**:
 
 $$\hat{r}(u,i) = \mu + b_u + b_i + p_u \cdot q_i$$
 
-In words: the model gives every user and every movie a short list of hidden "taste
-scores" — think *action-ness* or *for-kids-ness* — which it discovers **on its own** from
-the ratings. A user and a movie that match on these scores get a boost. It learns by making
-a guess, checking the error, and nudging the numbers a little — over and over (each full
-pass is one *epoch*). Click below and watch the error fall.
+How it learns, step by step:
+
+1. **Start:** give every user and every movie 20 random *taste numbers* (pᵤ and qᵢ).
+2. **Guess:** for one known rating, predict it with the formula above.
+3. **Nudge:** compare with the real rating and move the numbers a little to shrink the error.
+4. **Repeat** for every known rating — one full pass is an *epoch* — many times over.
+
+Nobody tells the model what the 20 numbers mean. They end up encoding things like
+*action-ness* or *for-kids-ness*, because that is what explains who likes what. The term
+**pᵤ·qᵢ** is the **taste match**: positive when the user's taste fits the movie, negative when not.
 """
     )
 
@@ -474,54 +535,97 @@ pass is one *epoch*). Click below and watch the error fall.
         chart_ph = st.empty()
 
         def _on_epoch(epoch, train_rmse):
-            history.append({"epoch": epoch, "train RMSE": train_rmse})
-            progress.progress(epoch / epochs,
-                              text=f"Epoch {epoch}/{epochs} — train RMSE {train_rmse:.4f}")
+            test_err = R.rmse(model.predict(test[:, 0], test[:, 1]), test[:, 2])
+            history.append({"epoch": epoch, "train (ratings it learns from)": train_rmse,
+                            "test (hidden ratings)": test_err, "baseline on test": base_rmse})
+            progress.progress(epoch / epochs, text=f"Epoch {epoch}/{epochs} — test RMSE {test_err:.4f}")
             chart_ph.line_chart(pd.DataFrame(history).set_index("epoch"))
 
         with st.spinner("Running SGD over the observed ratings…"):
             model.fit(train, on_epoch_end=_on_epoch)
         progress.empty()
-
-        test_rmse = R.rmse(model.predict(test[:, 0], test[:, 1]), test[:, 2])
         st.session_state["mf_model"] = model
-        st.session_state["mf_test_rmse"] = test_rmse
+        st.session_state["mf_history"] = pd.DataFrame(history).set_index("epoch")
+        st.session_state["mf_test_rmse"] = history[-1]["test (hidden ratings)"]
 
     if "mf_model" in st.session_state:
         model = st.session_state["mf_model"]
         test_rmse = st.session_state["mf_test_rmse"]
+        history = st.session_state["mf_history"]
 
-        st.markdown("#### Accuracy — did the latent factors help?")
+        st.markdown("#### 1 · Accuracy — did the taste numbers help?")
+        st.line_chart(history)
+        beats = history.index[history["test (hidden ratings)"] < base_rmse]
+        st.caption(
+            "**How to read it:** the training error keeps falling — the model gets ever better at "
+            "the ratings it has seen. What counts is the *test* line: "
+            + (f"it drops below the baseline from epoch **{beats[0]}** on. " if len(beats) else
+               "it has not yet dropped below the baseline — train for more epochs. ")
+            + "If train kept falling while test rose, the model would be memorising, not learning."
+        )
         cbar, cnum = st.columns([2, 1])
         cbar.bar_chart(
             pd.DataFrame(
-                {"test RMSE": [base_rmse, test_rmse]},
-                index=["Baseline (bias only)", "Matrix factorization"],
+                {"test RMSE (stars off)": [mean_rmse, base_rmse, test_rmse]},
+                index=["Always the average", "Step 1 · Baseline", "Step 2 · Factorization"],
             ),
             sort=False,
         )
-        delta = test_rmse - base_rmse
-        cnum.metric("MF test RMSE", f"{test_rmse:.4f}", f"{delta:+.4f} vs baseline",
+        cnum.metric("Factorization test RMSE", f"{test_rmse:.3f}", f"{test_rmse - base_rmse:+.3f} vs baseline",
                     delta_color="inverse")
-        cnum.caption("Lower is better, so a negative delta means MF beats the baseline.")
+        cnum.caption(
+            "The biases did most of the work; the taste numbers add a smaller, real improvement "
+            "on top. On a small dataset like this one (100,000 ratings), that is typical — the "
+            "real win is the next point."
+        )
 
-        st.markdown("#### Recommendations from the trained model")
+        st.markdown("#### 2 · Personal lists — the real win")
         rec_user = st.selectbox("Recommend for user", list(u2i.keys()), index=0, key="mf_user")
         mf_recs = R.get_mf_recommendations(
             rec_user, model, movies, ratings, u2i, i2i, i2it, num_recommendations=10
         )
-        st.dataframe(
+        base_list = R.baseline_recommendations(rec_user, b_i, ratings, movies, i2i, i2it)
+        cb, cm = st.columns(2)
+        cb.markdown("**Step 1 · Baseline** (same for everyone)")
+        cb.dataframe(pd.DataFrame({"title": base_list}), width="stretch", hide_index=True)
+        cm.markdown("**Step 2 · Factorization** (personal)")
+        cm.dataframe(
             mf_recs.style.format({"predicted_rating": "{:.2f}", "model_score": "{:.3f}"}),
             width="stretch",
             hide_index=True,
         )
         st.caption(
-            "Ranked on `model_score`, the uncapped prediction. A generous rater's favourites "
-            "can all score above 5 stars; capped to the star scale (`predicted_rating`) they "
-            "would tie at 5.00 and the model's ordering would be lost."
+            "**Try it:** switch the user. The baseline list hardly moves — it is the all-time "
+            "classics, minus what this user has seen. The factorization list changes with the "
+            "user's taste. MF ranks on `model_score`, the uncapped prediction: a generous rater's "
+            "favourites can score above 5, and capping them to `predicted_rating` would tie them."
         )
 
+        if len(mf_recs):
+            top_title = mf_recs["title"].iloc[0]
+            top_id = movies.loc[movies["title"] == top_title, "movieId"].iloc[0]
+            parts = R.explain_mf_prediction(model, u2i[rec_user], i2i[top_id])
+            st.markdown(f"**Why is _{top_title}_ number 1 for user {rec_user}?**")
+            cols = st.columns(len(parts))
+            for col, (name, value) in zip(cols, parts.items()):
+                col.metric(name, f"{value:.2f}" if name in ("average rating μ", "prediction") else f"{value:+.2f}")
+            st.caption("Average + user habit + movie reputation + taste match = the prediction. "
+                       "The taste match is the part the baseline cannot see.")
+
+        st.markdown("#### 3 · The blanks, filled")
+        filled = R.complete_grid(grid, model, ratings, movies, u2i, i2i)
+        st.dataframe(
+            filled.style.format("{:.1f}").apply(
+                lambda col: ["background-color: #fff3cd" if pd.isna(v) else "" for v in grid[col.name]]
+            ),
+            width="stretch",
+        )
+        st.caption("The corner of the matrix from the top of this tab: known ratings unchanged, "
+                   "the **yellow** cells are the model's predictions for the gaps.")
+
         with st.expander("🗺️ Show the learned 2D 'taste space' (PCA of movie factors)"):
+            st.caption("Each dot is a movie, placed by its 20 taste numbers. Close dots are liked "
+                       "by the same people — learned from ratings alone, no genre labels.")
             coords = PCA(n_components=2).fit_transform(model.q)
             taste = pd.DataFrame({"x": coords[:, 0], "y": coords[:, 1],
                                   "movieId": [i2it[k] for k in range(len(i2it))]})
@@ -546,16 +650,17 @@ with tab_ar:
     st.header("Association Rules")
     st.markdown(
         """
-No ratings, no features — just **transactions**. We mine rules of the form
-*"if a basket contains **X**, it often also contains **Y**"* from grocery receipts,
-scored by three numbers:
+No ratings, no features — just **receipts**. We look for rules of the form
+*"if a basket contains **X**, it often also contains **Y**"*, written **X → Y**, and score each
+rule with three numbers. Example — *X = pasta, Y = tomato sauce*:
 
-- **Support** — how often X and Y appear together (popularity).
-- **Confidence** — of baskets with X, how many also have Y (reliability).
-- **Lift** — how much more than chance they co-occur (**>1** = a real association).
+- **Support** — how common is the pair? *"Pasta and sauce are together in 2 % of all baskets."*
+- **Confidence** — how reliable is the rule? *"40 % of pasta buyers also take sauce."*
+- **Lift** — is it more than coincidence? *"Pasta buyers take sauce 4× as often as the average
+  shopper."* Lift **1** means no connection, above 1 a real one.
 
-The **Apriori** algorithm finds frequent itemsets, pruning any below a support
-threshold, then turns them into rules.
+The **Apriori** algorithm first finds every combination that is frequent enough (*minimum
+support*), then turns those into rules and keeps the reliable ones (*minimum confidence*).
 """
     )
 
@@ -607,6 +712,7 @@ threshold, then turns them into rules.
     )
     fig_supp.update_layout(yaxis={"categoryorder": "total ascending"}, coloraxis_showscale=False)
     st.plotly_chart(fig_supp, width="stretch")
+    st.caption(R.support_reading(support))
 
     if len(rules) == 0:
         st.warning("No rules at these thresholds — try lowering support or confidence.")
@@ -620,7 +726,10 @@ threshold, then turns them into rules.
             width="stretch",
             hide_index=True,
         )
-        st.info(R.read_rule(rules.nlargest(1, "lift").iloc[0], transactions.shape[0]))
+        top_rule = rules.nlargest(1, "lift").iloc[0]
+        st.info(R.read_rule(top_rule, transactions.shape[0]))
+        with st.expander("🔢 Where the three numbers come from — the top rule, counted out"):
+            st.markdown(R.rule_arithmetic(top_rule, transactions))
 
         st.subheader("Support vs. confidence (bubble size & color = lift)")
         fig_scatter = px.scatter(
@@ -629,9 +738,11 @@ threshold, then turns them into rules.
             labels={"support": "Support", "confidence": "Confidence", "lift": "Lift"},
         )
         st.plotly_chart(fig_scatter, width="stretch")
+        st.caption(R.scatter_reading(rules))
 
         st.subheader("Rule network (top rules by lift)")
         st.plotly_chart(_rules_network(rules), width="stretch")
+        st.caption(R.network_reading(R.rule_edges(rules)))
 
         st.divider()
         st.subheader("🛒 Frequently bought together")

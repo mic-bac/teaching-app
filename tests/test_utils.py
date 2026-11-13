@@ -553,6 +553,71 @@ def test_basket_recommendation_unknown_item():
     assert isinstance(out, str) and "No positive association" in out
 
 
+def test_genre_helpers_show_the_overlap_behind_a_similarity():
+    movies = _tiny_movies()
+    assert recommender_utils.shared_genres("Comedy Romance", "Comedy") == "1 of 2"
+    assert recommender_utils.shared_genres("Action Adventure", "Action Adventure") == "2 of 2"
+    assert recommender_utils.genre_set("(no genres listed)") == set()
+    assert recommender_utils.all_genres(movies) == ["Action", "Adventure", "Comedy", "Romance"]
+    labels = recommender_utils.genre_highlight(movies, ["Comedy", "Romance"])
+    assert list(labels) == ["other", "other", "Comedy + Romance", "Comedy"]
+
+
+def _tiny_ratings_frame():
+    # Users 1-3 rate movies 1-4; user 3 skips movies 2 and 3 (the blanks).
+    return pd.DataFrame({
+        "userId": [1, 1, 1, 1, 2, 2, 2, 2, 3, 3],
+        "movieId": [1, 2, 3, 4, 1, 2, 3, 4, 1, 4],
+        "rating": [5.0, 4.0, 1.0, 2.0, 4.0, 5.0, 2.0, 1.0, 5.0, 2.0],
+    })
+
+
+def test_baseline_gives_everyone_the_same_order():
+    movies, ratings = _tiny_movies(), _tiny_ratings_frame()
+    _, _, i2i, i2it = recommender_utils.encode_ratings(ratings)
+    b_i = np.array([0.5, 0.3, -0.2, -0.4])  # A > B > C > D
+    others = pd.concat([ratings, pd.DataFrame({"userId": [9], "movieId": [1], "rating": [3.0]})])
+    first = recommender_utils.baseline_recommendations(3, b_i, others, movies, i2i, i2it)
+    second = recommender_utils.baseline_recommendations(9, b_i, others, movies, i2i, i2it)
+    assert first == ["B", "C"]          # only unseen movies, best movie bias first
+    assert second == ["B", "C", "D"]    # same order — the baseline is not personal
+
+
+def test_mf_explanation_adds_up_and_grid_fills_only_blanks():
+    movies, ratings = _tiny_movies(), _tiny_ratings_frame()
+    enc, u2i, i2i, _ = recommender_utils.encode_ratings(ratings)
+    model = recommender_utils.MatrixFactorization(len(u2i), len(i2i), n_factors=2, n_epochs=5).fit(enc)
+    parts = recommender_utils.explain_mf_prediction(model, 0, 1)
+    pieces = sum(v for k, v in parts.items() if k != "prediction")
+    assert parts["prediction"] == pytest.approx(pieces)
+    assert parts["prediction"] == pytest.approx(model.predict([0], [1], clip=False)[0])
+
+    grid = recommender_utils.rating_grid(ratings, movies, n_users=3, n_movies=4)
+    assert list(grid.index) == [3]  # the only user with blanks among the popular movies
+    assert grid.isna().sum().sum() == 2
+    filled = recommender_utils.complete_grid(grid, model, ratings, movies, u2i, i2i)
+    assert filled.notna().all().all()
+    known = grid.notna()
+    assert filled.where(known).equals(grid.where(known))  # known ratings are left alone
+
+
+def test_rule_arithmetic_and_readings_match_the_rule_numbers():
+    trans = recommender_utils.build_transactions(_tiny_groceries())
+    rules = recommender_utils.make_rules(recommender_utils.run_apriori(trans, 0.1), 0.5)
+    rule = rules[rules["rule_str"] == "milk → bread"].iloc[0]
+    text = recommender_utils.rule_arithmetic(rule, trans)
+    # 5 baskets, 4 with milk, 4 with bread, 4 with both.
+    assert "4 ÷ 5 = **0.8000**" in text and "4 ÷ 4 = **100.0%**" in text
+    assert f"**{rule['lift']:.2f}**" in text
+
+    reading = recommender_utils.support_reading(recommender_utils.item_support(trans))
+    assert "**80%** of baskets" in reading and "1 in" not in reading  # "1 in 1" would read oddly
+    assert "Biggest bubble" in recommender_utils.scatter_reading(rules)
+    edges = recommender_utils.rule_edges(rules)
+    assert ("milk", "bread", rule["lift"]) in edges
+    assert "is linked to" in recommender_utils.network_reading(edges)
+
+
 def test_taxonomy_dot_is_graphviz():
     dot = recommender_utils.taxonomy_dot()
     assert dot.startswith("digraph")

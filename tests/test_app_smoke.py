@@ -144,7 +144,19 @@ def test_recommender_page_matrix_factorization_trains():
     assert train_buttons, "MF train button not found"
     train_buttons[0].click().run()
     assert not at.exception, f"MF training raised: {[str(e) for e in at.exception]}"
-    assert any("MF test RMSE" in m.label for m in at.metric)
+    assert any("Factorization test RMSE" in m.label for m in at.metric)
+    # The winning recommendation is taken apart into its four pieces.
+    assert any(m.label == "taste match pᵤ·qᵢ" for m in at.metric)
+
+
+def test_recommender_genre_map_highlights_whole_genres():
+    at = AppTest.from_file(str(ROOT / "pages/3_Recommender.py"), default_timeout=180)
+    at.run()
+    modes = [r for r in at.radio if r.label == "Highlight"]
+    assert modes, "genre-map highlight switch not found"
+    modes[0].set_value("Genres").run()
+    assert not at.exception
+    assert any(m.label == "Genres to highlight" for m in at.multiselect)
 
 
 def test_propensity_page_fits_a_model_at_the_smallest_sample():
