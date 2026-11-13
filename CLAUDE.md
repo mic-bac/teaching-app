@@ -163,8 +163,9 @@ and the name `src` would otherwise collide with `segmentation/src`).
 - Railway builds the `Dockerfile`; `scripts/start.sh` clones the siblings **at container
   start** on the matching branch (`SIBLING_BRANCH`, else `$RAILWAY_GIT_BRANCH`, else `main`), plus
   public data. A sibling-only change therefore needs just a redeploy, no app commit.
-- **CI/CD** (`.github/workflows/ci-cd.yml`): every push/PR to `develop`/`main` runs the tests
-  against freshly cloned siblings (PR → the target branch's siblings), then builds and
+- **CI/CD** (`.github/workflows/ci-cd.yml`): every push to `develop`/`main` (no separate PR
+  trigger, to avoid testing a commit twice) runs the tests against freshly cloned siblings of the
+  same branch, then builds and
   health-checks the Docker image; only a push to `main` deploys, via `railway up` (secret
   `RAILWAY_TOKEN`, variable `RAILWAY_SERVICE`, GitHub environment `production`). Railway's own
   GitHub auto-deploy must stay off. CI has no Kaggle data, so the synthetic fallbacks are tested too.
