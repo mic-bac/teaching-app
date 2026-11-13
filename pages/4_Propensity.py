@@ -112,6 +112,14 @@ st.markdown(
     Every tab shows the **real code** that produces the result, not a slide summary.
     """
 )
+with st.container(border=True):
+    st.markdown(
+        """
+        💼 **Where you'll use this** — choosing which customers get a retention offer, which leads sales
+        should call first, who receives a campaign (and who would only cost money), or which members of
+        your network are most likely to sign up. Any time budget is limited and people differ.
+        """
+    )
 
 control, status = st.columns([2, 3])
 with control:
@@ -169,7 +177,7 @@ with tab_overview:
     )
 
     st.subheader("How a propensity model is built")
-    st.graphviz_chart(P.propensity_pipeline_dot(), use_container_width=True)
+    st.graphviz_chart(P.propensity_pipeline_dot(), width="stretch")
 
     st.subheader("Three ways to predict behaviour")
     st.table(
@@ -262,11 +270,11 @@ with tab_windows:
         margin=dict(l=10, r=10, t=30, b=10),
         title="<b>Learn from the past, score a different customer in the future</b>",
     )
-    st.plotly_chart(fig_timeline, use_container_width=True)
+    st.plotly_chart(fig_timeline, width="stretch")
 
     st.dataframe(
         timeline[["window", "start", "end", "weeks", "role"]],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -309,7 +317,7 @@ with tab_data:
     m3.metric("Churn rate", f"{y.mean() * 100:.1f}%")
     m4.metric("Train / test", f"{len(split['X_train']):,} / {len(split['X_test']):,}")
 
-    st.dataframe(churn_df.head(8), use_container_width=True, hide_index=True)
+    st.dataframe(churn_df.head(8), width="stretch", hide_index=True)
 
     st.markdown(
         """
@@ -331,7 +339,7 @@ with tab_data:
         title="<b>Linear correlation with churn — a first hint, not the answer</b>",
     )
     fig_corr.update_layout(height=420, showlegend=False, coloraxis_showscale=False)
-    st.plotly_chart(fig_corr, use_container_width=True)
+    st.plotly_chart(fig_corr, width="stretch")
     st.caption(
         "Correlation only sees straight lines. A tree model will later find effects that "
         "barely show up here — which is exactly why we compare model families."
@@ -342,14 +350,13 @@ with tab_data:
         **Preparation choices worth stating out loud**
 
         - `CustomerID` is dropped — it is a key, not a feature. Left in, a tree happily memorises it.
-        - Categoricals ({", ".join(f"`{c}`" for c in encoders)}) are label-encoded, and the encoders
-          are kept so a new customer can be encoded the same way later.
-        - The split is **stratified**: the churn rate is identical on both sides, so a test score
-          measures the model instead of an accident of sampling.
-        - **Split first, then preprocess.** Scaling is *not* done here: it lives inside a
-          `Pipeline(StandardScaler → model)` (see the Models tab), so every fit — including each
-          cross-validation fold — learns its mean/std from its own training rows only. Scaling
-          everything up front would leak the validation folds into preprocessing.
+        - Text columns ({", ".join(f"`{c}`" for c in encoders)}) are turned into numbers (models only
+          read numbers), and we keep the translation so a new customer is translated the same way.
+        - The split is **stratified**: train and test get the same share of churners, so a good score
+          reflects the model — not a lucky split.
+        - **Split first, then prepare.** Scaling is done *inside* the model (a scikit-learn `Pipeline`),
+          so test data never influences how the training data is prepared — otherwise the test would
+          be quietly easier than real life.
         """
     )
 
@@ -363,8 +370,9 @@ with tab_data:
 with tab_models:
     st.subheader("Three model families")
     st.markdown(
-        "All three expose `predict_proba` — the entry requirement for look-alike modelling, "
-        "where we need *how likely a point falls in a class*, not just the class."
+        "All three give a **probability** (\"72% likely to churn\"), not just a yes/no — exactly what "
+        "look-alike modelling needs, because a probability lets you rank customers and spend budget "
+        "where it matters most."
     )
     st.table(
         pd.DataFrame(
@@ -403,7 +411,7 @@ with tab_models:
             labels=dict(color="Customers"),
         )
         fig_cm.update_layout(height=360, coloraxis_showscale=False, margin=dict(t=20))
-        st.plotly_chart(fig_cm, use_container_width=True)
+        st.plotly_chart(fig_cm, width="stretch")
         false_positives = int(confusion.iloc[0, 1])
         false_negatives = int(confusion.iloc[1, 0])
         st.caption(
@@ -430,7 +438,7 @@ with tab_models:
             yaxis_title="True positive rate",
             showlegend=False,
         )
-        st.plotly_chart(fig_roc, use_container_width=True)
+        st.plotly_chart(fig_roc, width="stretch")
 
         fig_pr = go.Figure()
         fig_pr.add_trace(
@@ -445,7 +453,7 @@ with tab_models:
             yaxis_title="Precision",
             showlegend=False,
         )
-        st.plotly_chart(fig_pr, use_container_width=True)
+        st.plotly_chart(fig_pr, width="stretch")
         st.caption(
             "The dotted line is the chance level: for PR that is the share of churners, "
             "so a PR curve is only impressive relative to it."
@@ -456,7 +464,7 @@ with tab_models:
         comparison = pd.DataFrame(
             {name: cached_fit(name, sample_size)["metrics"] for name in P.MODEL_SPECS}
         ).round(4)
-    st.dataframe(comparison, use_container_width=True)
+    st.dataframe(comparison, width="stretch")
     st.success(f"Best ROC-AUC: **{comparison.loc['ROC-AUC'].idxmax()}**")
 
     show_source(P.build_model, "🐍 Building the three model families")
@@ -470,10 +478,9 @@ with tab_tuning:
     st.subheader("Generalisation: cross-validation")
     st.markdown(
         """
-        A model should not memorise the training data, it should **generalise**. A single
-        train/test split is one draw of a random variable — k-fold cross-validation trains
-        and tests *k* times and averages, which is a far more stable estimate.
-        **Stratified** folds keep the class ratio in every fold.
+        A model should not memorise its training data — it should work on customers it has never
+        seen. One train/test split can be lucky or unlucky, so **cross-validation** repeats the test
+        *k* times on different slices and averages the scores: a far more trustworthy number.
         """
     )
 
@@ -494,7 +501,7 @@ with tab_tuning:
             y=scores.mean(), line_dash="dash", annotation_text=f"mean {scores.mean():.4f}"
         )
         fig_folds.update_layout(height=380, yaxis_range=[max(0.5, scores.min() - 0.05), 1.0])
-        st.plotly_chart(fig_folds, use_container_width=True)
+        st.plotly_chart(fig_folds, width="stretch")
         c1, c2 = st.columns(2)
         c1.metric("Mean ROC-AUC", f"{scores.mean():.4f}")
         c2.metric("Spread (std)", f"{scores.std():.4f}")
@@ -506,11 +513,10 @@ with tab_tuning:
     st.subheader("Hyperparameter tuning")
     st.markdown(
         """
-        Hyperparameters (tree depth, regularisation strength, …) steer *how* a model learns;
-        they are not learned from the data. **GridSearchCV** tries every combination;
-        **RandomizedSearchCV** samples `n_iter` of them, which wins as soon as the grid gets
-        large. Both score every candidate by cross-validation — so the price is
-        *candidates × folds* model fits.
+        **Hyperparameters** are the model's settings — how deep a tree may grow, how cautious the
+        model should be. We cannot learn them from data directly, so we *try* candidates:
+        **grid search** tests every combination, **random search** tests a sample of them (much faster
+        when there are many). Each try is cross-validated, so the cost is *candidates × folds* fits.
         """
     )
 
@@ -547,7 +553,7 @@ with tab_tuning:
         c3.metric("Model fits spent", f"{tuned['n_fits']:,}")
         st.write("**Best parameters**")
         st.json(tuned["best_params"])
-        st.dataframe(tuned["results"].head(10), use_container_width=True, hide_index=True)
+        st.dataframe(tuned["results"].head(10), width="stretch", hide_index=True)
         st.caption(
             "The CV score and the test score are different numbers measured on different data — "
             "compare tuned-vs-untuned *within* one column, never across."
@@ -599,7 +605,7 @@ with tab_curves:
             yaxis_title="ROC-AUC",
             height=420,
         )
-        st.plotly_chart(fig_lc, use_container_width=True)
+        st.plotly_chart(fig_lc, width="stretch")
 
         gap = float(learning["train_mean"].iloc[-1] - learning["validation_mean"].iloc[-1])
         c1, c2, c3 = st.columns(3)
@@ -625,7 +631,7 @@ with tab_curves:
             yaxis_title="ROC-AUC",
             height=420,
         )
-        st.plotly_chart(fig_vc, use_container_width=True)
+        st.plotly_chart(fig_vc, width="stretch")
         best_value = validation.loc[validation["validation_mean"].idxmax(), "value"]
         if P.validation_curve_is_flat(validation):
             spread = validation["validation_mean"].max() - validation["validation_mean"].min()
@@ -677,13 +683,13 @@ with tab_scores:
     fig_scores.add_vline(x=medium_cut, line_dash="dash", annotation_text="Low | Medium")
     fig_scores.add_vline(x=high_cut, line_dash="dash", annotation_text="Medium | High")
     fig_scores.update_layout(height=430)
-    st.plotly_chart(fig_scores, use_container_width=True)
+    st.plotly_chart(fig_scores, width="stretch")
 
     st.dataframe(
         summary.style.format(
             {"Share": "{:.1%}", "Mean propensity": "{:.3f}", "Actual churn rate": "{:.1%}"}
         ),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     st.caption(
@@ -710,7 +716,7 @@ with tab_scores:
         title="<b>The model is fixed — the threshold is still yours to choose</b>",
     )
     fig_sweep.update_layout(height=380)
-    st.plotly_chart(fig_sweep, use_container_width=True)
+    st.plotly_chart(fig_sweep, width="stretch")
     st.caption(
         "Raise the threshold and precision rises while recall falls: fewer wasted offers, more customers "
         "lost. Lower it and the trade goes the other way."
@@ -720,8 +726,8 @@ with tab_scores:
     importance = P.feature_importance(scored["model"], split["feature_names"])
     if importance.empty:
         st.info(
-            f"{score_model} exposes no built-in feature attribution — for a neural network you would reach "
-            "for permutation importance or SHAP instead."
+            f"{score_model} cannot tell us directly which features drive it — a neural network is a black "
+            "box. Tools like *SHAP* exist to open it up; the other two models can show you right here."
         )
     else:
         fig_imp = px.bar(
@@ -732,7 +738,7 @@ with tab_scores:
             title=f"<b>Top features — {importance['kind'].iloc[0]}</b>",
         )
         fig_imp.update_layout(height=420)
-        st.plotly_chart(fig_imp, use_container_width=True)
+        st.plotly_chart(fig_imp, width="stretch")
 
     st.markdown(
         """
@@ -748,6 +754,16 @@ with tab_scores:
         answers the acquisition half of the business question.
         """
     )
+    with st.container(border=True):
+        st.markdown(
+            """
+🎯 **What to remember**
+- **A score per customer beats a yes/no.** It lets you rank people and spend budget where it pays.
+- **Accuracy can lie.** With imbalanced data, look at precision, recall and the confusion matrix —
+  and decide which mistake is more expensive for your business.
+- **Test honestly:** respect time (observation → buffer → outcome), split first, and cross-validate.
+"""
+        )
 
     show_source(P.risk_segments, "🐍 Cutting scores into segments")
     show_source(P.threshold_sweep, "🐍 Sweeping the decision threshold")

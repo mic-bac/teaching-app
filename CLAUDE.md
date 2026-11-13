@@ -49,14 +49,14 @@ teaching-app/            ← this repo (Streamlit orchestrator; git repo, branch
 | `pages/4_Propensity.py` | `predictions/propensity.py` | ✅ built |
 | `pages/5_Survival.py` | `predictions/survival.py` | ✅ built |
 | `pages/6_Segmentation.py` | `segmentation/` (rfm, cltv, clustering) | ✅ built |
-| object-detection | respective repo | 🔜 **will become its own `pages/N_*.py`** |
+| `pages/7_Time_Series.py` | `predictions/timeseries.py` | ✅ built |
+| `pages/8_Forecasting.py` | `predictions/forecasting.py` | 🔜 next — reuses `forecasting_utils.py` |
+| `pages/9_Object_Detection.py` | `object-detection/` | 🔜 last — **results only** (no torch in the app) |
 
-`predictions/timeseries.py` (analysing a series + classical models) and
-`predictions/forecasting.py` (Prophet/XGBoost) are a third topic in that sibling repo and
-are **not** yet surfaced — they belong to a different lecture block. Unlike the two churn
-scripts, their logic lives in importable modules (`predictions/src/{sales_data,ts_core,
-forecast_models,control_series}.py`), so a future page can **import** the sibling like
-`segmentation_utils.py` does rather than re-implement it.
+The time-series lessons import the sibling's pure modules (`predictions/src/{sales_data,
+ts_core,forecast_models,control_series}.py`) through `utils/forecasting_utils.py`, loaded as
+a package with `teaching.load_sibling_package` (their modules import each other relatively,
+and the name `src` would otherwise collide with `segmentation/src`).
 
 ## Environments & tooling
 
@@ -77,6 +77,8 @@ forecast_models,control_series}.py`), so a future page can **import** the siblin
 - **`st.*` lives only in `Home.py` and `pages/`.** All logic goes in **`utils/` as UI-free,
   importable, unit-testable functions.** `utils/teaching.py` is deliberately Streamlit-free.
 - Imports are `from utils.x import ...` — the app always runs from the repo root.
+- Width: use `width="stretch"` (not the removed `use_container_width`). Process pools use
+  `get_context("forkserver")` — forking Streamlit's multi-threaded server can deadlock.
 - **First call in every page is `st.set_page_config(...)`**, `layout="wide"`.
 - Existing utils: `data_generator.py` (`@st.cache_data`), `db_utils.py` (SQLAlchemy Core,
   Postgres→SQLite), `compute_utils.py` (serial/parallel/vectorized; `expensive_row_op` must
@@ -85,7 +87,9 @@ forecast_models,control_series}.py`), so a future page can **import** the siblin
   `propensity_utils.py` (churn classification; its `load_churn` synthetic fallback is shared
   with), `survival_utils.py` (Kaplan-Meier, Cox/RSF/SVM, censoring-aware metrics),
   `segmentation_utils.py` (RFM, cohort-measured CLTV, clustering — imports `segmentation/src/*`
-  incl. `cltv_core`).
+  incl. `cltv_core`), `forecasting_utils.py` (time series + forecasting — imports
+  `predictions/src/*` as a package; adds the lesson's CV loop, Christmas check and the slides'
+  Excel smoothing example).
 
 - **Two ways a util relates to its sibling.** Most *re-implement* the sibling's logic, because
   `predictions/{propensity,survival}.py` are `# %%` scripts with top-level side effects and
@@ -108,11 +112,16 @@ forecast_models,control_series}.py`), so a future page can **import** the siblin
   playground's write-toggle is a *presenter convenience* so a stray `DROP` doesn't derail a
   live demo — not a security control. Don't add hardening beyond that.)
 - **Explain the "why" in docstrings/captions** (see `_resync_id_sequence` for the model).
+- **Write for business students, not mathematicians.** Plain language first, short sentences, no
+  unexplained jargon; formulas from the slides go into a collapsed *"🔎 The maths, if you're
+  curious"* expander. Every lesson page opens with a **💼 Where you'll use this** box (2–3 real job
+  situations) and ends with **🎯 What to remember** (three bullets). The goal is curiosity and
+  confidence — students should leave wanting to use these tools at work.
 - Reuse the sibling repo's real content instead of duplicating it.
 
 ## Testing (required for every change)
 
-- Run with `make test` / `uv run pytest`. All tests must stay green (171 as of 2026-11-12).
+- Run with `make test` / `uv run pytest`. All tests must stay green (179 as of 2026-11-12).
 - **`tests/test_sibling_alignment.py`** — drift guard: sibling hyperparameters are regex-read and
   compared with the app. Parameter differences for live-demo runtime are fine but must be
   recorded there as `"intentional"`; logic differences are not.

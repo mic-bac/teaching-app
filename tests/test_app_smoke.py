@@ -24,6 +24,7 @@ PAGES = [
     "pages/4_Propensity.py",
     "pages/5_Survival.py",
     "pages/6_Segmentation.py",
+    "pages/7_Time_Series.py",
 ]
 
 
@@ -250,3 +251,16 @@ def test_segmentation_page_reacts_to_the_retention_slider():
     assert not at.exception, [str(e) for e in at.exception]
     # Customer equity is reported as a metric and must survive the change.
     assert any("equity" in m.label.lower() for m in at.metric)
+
+
+def test_time_series_page_reproduces_the_slide_and_fits_sarima():
+    at = AppTest.from_file(str(ROOT / "pages/7_Time_Series.py"), default_timeout=300)
+    at.run()
+    assert not at.exception
+    shown = [(m.label, m.value) for m in at.metric]
+    # The lecture's Excel example (slides 70/78), reproduced by the real code.
+    assert ("RMSE", "13.60") in shown and ("MSE", "184.89") in shown
+    sarima = next(b for b in at.button if "SARIMA" in b.label)
+    sarima.click().run()
+    assert not at.exception
+    assert "SARIMA MAPE" in [m.label for m in at.metric]

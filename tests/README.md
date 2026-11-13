@@ -15,7 +15,7 @@ Automated tests for the Streamlit teaching app.
   draws its learning and validation curves, and the survival page reports
   Kaplan-Meier readouts, trains all three models, scores them over time, and
   states that the ranking-only SVM has no survival curve, and the segmentation
-  page reacts to its retention-rate slider without reloading the transaction log.
+  page reacts to its retention-rate slider without reloading the transaction log. The time-series page reproduces the lecture's Excel smoothing example and fits SARIMA on click.
 - **`test_sibling_alignment.py`** — a drift guard for the utils that *re-implement* a
   sibling script (propensity, survival, recommender). Each hyperparameter is regex-read from
   the sibling's source and compared with what the app runs. Entries are either `"same"` (the
@@ -37,6 +37,11 @@ Automated tests for the Streamlit teaching app.
     than line items, the tenure floor that keeps a one-order customer's
     annualised contribution finite, and cohort frames that keep unobserved
     periods missing instead of silently reading them as zero retention.
+  - `forecasting_utils` — the slides' Excel smoothing example reproduced exactly (MAE 10.20,
+    MSE 184.89, RMSE 13.60 at α = 0.4), rolling-origin folds that only move forward, every
+    Christmas lying before the first week a 52-week model can be tested on, the promotion
+    break, the SARIMA label derived from the sibling, and `predictions/src` coexisting with
+    `segmentation/src` in one process.
   - `data_generator.generate_dataset` — shape, column names, value range.
   - `compute_utils` — serial/parallel/vectorized results agree, and
     `run_benchmark` returns the expected keys/types.

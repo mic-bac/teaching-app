@@ -9,6 +9,7 @@ Kept free of Streamlit so it can be unit-tested directly. The pages import these
 and do the actual ``st.*`` rendering themselves.
 """
 
+import importlib.machinery
 import importlib.util
 import inspect
 import re
@@ -41,6 +42,31 @@ def load_sibling_module(sibling: str, relative_path: str):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def load_sibling_package(sibling: str, package_dir: str = "src") -> str:
+    """Register a sibling's package under a collision-free name; return that name.
+
+    Use this instead of ``load_sibling_module`` when the sibling's modules import
+    EACH OTHER relatively (``from .ts_core import ...``): a relative import needs
+    a parent package to resolve against. The directory is registered as package
+    ``sibling_<repo>_<dir>``, so ``importlib.import_module(f"{name}.ts_core")``
+    loads the sibling's own file, with its relative imports intact — and without
+    colliding with another sibling's ``src``.
+
+    Raises ``FileNotFoundError`` if the sibling (or the directory) is not checked out.
+    """
+    directory = ROOT / sibling / package_dir
+    name = f"sibling_{sibling}_{package_dir}".replace("-", "_").replace("/", "_")
+    if name in sys.modules:
+        return name
+    if not directory.is_dir():
+        raise FileNotFoundError(f"{sibling}/{package_dir} is not checked out")
+    spec = importlib.machinery.ModuleSpec(name, None, is_package=True)
+    package = importlib.util.module_from_spec(spec)
+    package.__path__ = [str(directory)]
+    sys.modules[name] = package
+    return name
 
 
 def source_of(obj) -> str:

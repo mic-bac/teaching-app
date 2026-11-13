@@ -100,6 +100,14 @@ st.markdown(
     Every tab shows the **real code** that produces the result, not a slide summary.
     """
 )
+with st.container(border=True):
+    st.markdown(
+        """
+        💼 **Where you'll use this** — timing a retention call *before* a customer is likely to leave,
+        estimating how long a subscriber stays (and so what they are worth), or planning when machines,
+        contracts or licences will need replacing. Wherever the question is *"when?"*, not just *"if?"*.
+        """
+    )
 
 control, status = st.columns([2, 3])
 with control:
@@ -136,7 +144,7 @@ tab_overview, tab_km, tab_models, tab_eval, tab_individual = st.tabs(
 # ===========================================================================
 with tab_overview:
     st.subheader("Two ways to answer one question")
-    st.graphviz_chart(S.survival_taxonomy_dot(), use_container_width=True)
+    st.graphviz_chart(S.survival_taxonomy_dot(), width="stretch")
 
     st.subheader("Censoring: the whole point")
     st.markdown(
@@ -184,7 +192,7 @@ with tab_overview:
         height=330,
         margin=dict(t=50, b=10),
     )
-    st.plotly_chart(fig_cens, use_container_width=True)
+    st.plotly_chart(fig_cens, width="stretch")
 
     fig_shift = go.Figure()
     for _, row in example.iterrows():
@@ -209,9 +217,9 @@ with tab_overview:
         height=330,
         margin=dict(t=50, b=10),
     )
-    st.plotly_chart(fig_shift, use_container_width=True)
+    st.plotly_chart(fig_shift, width="stretch")
 
-    st.dataframe(example, use_container_width=True, hide_index=True)
+    st.dataframe(example, width="stretch", hide_index=True)
 
     X, y, feature_names = cached_survival(sample_size)
     c1, c2, c3, c4 = st.columns(4)
@@ -235,16 +243,18 @@ with tab_overview:
 # ===========================================================================
 with tab_km:
     st.subheader("The survival function, estimated from data alone")
-    st.latex(r"S(t) = P(T > t) \qquad\qquad \hat{S}(t) = \prod_{t_i \le t}\left(1 - \frac{d_i}{n_i}\right)")
     st.markdown(
         """
-        At every time where churn happens, Kaplan-Meier multiplies in the fraction that
-        survived it: $d_i$ customers churned at $t_i$, $n_i$ were still **at risk** just
-        before. Censored customers stay in $n_i$ until they leave the study — that is
-        precisely how their partial information gets used. No distribution is assumed;
-        the curve is a staircase that only steps down where something actually happened.
+        The **Kaplan-Meier curve** answers *"what share of customers is still with us after t months?"*
+        Each month, it asks: of everyone still here, how many left? — and keeps multiplying those
+        shares together. Customers who have *not* left yet still count for as long as we watched them;
+        that is how their partial information gets used. The result is a staircase that only steps
+        down when someone actually leaves.
         """
     )
+    with st.expander("🔎 The maths, if you're curious"):
+        st.latex(r"S(t) = P(T > t) \qquad\qquad \hat{S}(t) = \prod_{t_i \le t}\left(1 - \frac{d_i}{n_i}\right)")
+        st.markdown("$d_i$ customers churned at time $t_i$; $n_i$ were still *at risk* just before it.")
 
     km = S.kaplan_meier(churn_df["Tenure"], churn_df["Churn"])
 
@@ -272,7 +282,7 @@ with tab_km:
         yaxis_range=[0, 1],
         height=470,
     )
-    st.plotly_chart(fig_km, use_container_width=True)
+    st.plotly_chart(fig_km, width="stretch")
 
     readouts = st.columns(4)
     for column, month in zip(readouts, (6, 12, 24, 36)):
@@ -301,7 +311,7 @@ with tab_km:
         labels={"time": "Months since signup", "survival": "S(t)"},
     )
     fig_group.update_layout(height=470, yaxis_range=[0, 1])
-    st.plotly_chart(fig_group, use_container_width=True)
+    st.plotly_chart(fig_group, width="stretch")
 
     show_source(S.kaplan_meier, "🐍 The Kaplan-Meier estimator")
     show_source(S.km_by_group, "🐍 One curve per segment")
@@ -356,9 +366,9 @@ with tab_models:
         fig_c.update_layout(
             title="<b>Concordance index — train vs test</b>", barmode="group", yaxis_range=[0.5, 1.0], height=430
         )
-        st.plotly_chart(fig_c, use_container_width=True)
+        st.plotly_chart(fig_c, width="stretch")
 
-        st.dataframe(frame.round(4), use_container_width=True, hide_index=True)
+        st.dataframe(frame.round(4), width="stretch", hide_index=True)
         best = frame.loc[frame["Test c-index"].idxmax(), "Model"]
         st.success(f"Best ranking on held-out customers: **{best}**")
         st.caption(
@@ -397,9 +407,9 @@ with tab_eval:
 
     times, in_window = S.evaluation_window(split["y_train"], split["y_test"])
     st.info(
-        f"**Evaluation window.** Both metrics reweight observations by the inverse probability of "
-        f"still being uncensored, G(t) — and G hits zero at the end of the follow-up, where nobody "
-        f"is left to observe. So we grade strictly inside the observed window: "
+        f"**Evaluation window.** At the very end of the data almost nobody is still being observed, "
+        f"so there is nothing left to grade against. We therefore only score the models where enough "
+        f"customers are still visible: "
         f"{int(in_window.sum()):,} of {len(split['y_test']):,} test customers, at "
         f"t = {', '.join(f'{t:.0f}' for t in times)} months."
     )
@@ -433,7 +443,7 @@ with tab_eval:
         )
         fig_auc.add_hline(y=0.5, line_dash="dot", line_color="gray", annotation_text="chance")
         fig_auc.update_layout(height=450)
-        st.plotly_chart(fig_auc, use_container_width=True)
+        st.plotly_chart(fig_auc, width="stretch")
 
         st.markdown("**Integrated Brier score** — lower is better; ~0.25 is uninformative.")
         numeric = [row for row in brier_rows if not isinstance(row["Integrated Brier score"], str)]
@@ -446,7 +456,7 @@ with tab_eval:
                 color="Model",
             )
             fig_brier.update_layout(height=400, showlegend=False)
-            st.plotly_chart(fig_brier, use_container_width=True)
+            st.plotly_chart(fig_brier, width="stretch")
 
         for row in brier_rows:
             value = row["Integrated Brier score"]
@@ -454,8 +464,8 @@ with tab_eval:
                 st.warning(f"**{row['Model']}** — {value}")
 
         st.caption(
-            "Unlike the c-index, the Brier score grades *calibration* as well as discrimination: "
-            "a model can rank customers perfectly and still claim the wrong probabilities."
+            "The c-index only checks the *order* of customers. The Brier score also checks whether the "
+            "*percentages* are right — a model can rank everyone correctly and still promise the wrong odds."
         )
     else:
         st.info("Click **📏 Score all three models over time** to compute AUC(t) and the Brier scores.")
@@ -502,7 +512,7 @@ with tab_individual:
             labels={"time": "Months since signup", "survival": "S(t)"},
         )
         fig_ind.update_layout(height=470, yaxis_range=[0, 1])
-        st.plotly_chart(fig_ind, use_container_width=True)
+        st.plotly_chart(fig_ind, width="stretch")
         st.caption(
             "Where a curve crosses 50% is that customer's predicted median lifetime — a far more "
             "actionable number than a churn flag."
@@ -522,11 +532,12 @@ with tab_individual:
             title="<b>Cox coefficients — right speeds churn up, left slows it down</b>",
         )
         fig_coef.update_layout(height=430, coloraxis_showscale=False)
-        st.plotly_chart(fig_coef, use_container_width=True)
-        st.dataframe(coefficients.round(4), use_container_width=True, hide_index=True)
+        st.plotly_chart(fig_coef, width="stretch")
+        st.dataframe(coefficients.round(4), width="stretch", hide_index=True)
         st.caption(
-            "`exp(coefficient)` is the hazard ratio: the multiplicative effect on the churn hazard of a "
-            "one-standard-deviation increase in that feature. Above 1 = churns sooner."
+            "Read the **hazard ratio** like this: **above 1 → this feature makes customers leave sooner**, "
+            "below 1 → they stay longer. A ratio of 1.4 means: a customer clearly above average on that "
+            "feature has roughly 40% higher risk of leaving at any given moment."
         )
 
     st.divider()
@@ -550,11 +561,11 @@ with tab_individual:
         labels={"time": "Months since signup", "survival": "S(t)"},
     )
     fig_strata.update_layout(height=470, yaxis_range=[0, 1])
-    st.plotly_chart(fig_strata, use_container_width=True)
+    st.plotly_chart(fig_strata, width="stretch")
 
     st.dataframe(
         strata_summary.style.format({"Observed churn rate": "{:.1%}", "Mean tenure": "{:.1f}"}),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -574,6 +585,18 @@ with tab_individual:
         - Compare several models, by cross-validation and more than one metric.
         """
     )
+    with st.container(border=True):
+        st.markdown(
+            """
+🎯 **What to remember**
+- **"Not yet" is information.** Customers who are still here tell you something — survival
+  analysis uses them instead of ignoring them.
+- **The answer is a curve, not a yes/no.** It tells you *when* to act, which is what a campaign
+  calendar needs.
+- **Judge models on order *and* on probabilities** — the c-index and the Brier score answer
+  different questions.
+"""
+        )
 
     show_source(S.individual_survival_curves, "🐍 Individual survival curves")
     show_source(S.cox_coefficients, "🐍 Cox coefficients as hazard ratios")

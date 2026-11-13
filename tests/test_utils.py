@@ -1101,3 +1101,80 @@ def test_flat_validation_curve_is_recognised():
     peaked = pd.DataFrame({"value": [1, 5, 10], "validation_mean": [0.80, 0.90, 0.85]})
     assert propensity_utils.validation_curve_is_flat(flat)
     assert not propensity_utils.validation_curve_is_flat(peaked)
+
+
+
+# ---------------------------------------------------------------------------
+# forecasting_utils — imports the sibling predictions/src package
+# ---------------------------------------------------------------------------
+from utils import forecasting_utils  # noqa: E402
+
+
+def _needs_predictions():
+    if not forecasting_utils.SIBLING_AVAILABLE:
+        pytest.skip("predictions sibling not checked out")
+
+
+def test_slide_smoothing_table_reproduces_the_lecture_spreadsheet():
+    _needs_predictions()
+    table, metrics = forecasting_utils.slide_smoothing_table(alpha=0.4)
+    # Slides 70/78: pred column and MAE / MAPE / MSE / RMSE at alpha = 0.4.
+    assert table["pred"].round(2).tolist() == [3.0, 3.0, 3.8, 5.88, 11.53, 11.72, 13.83, 17.1, 19.46, 32.08, 35.65]
+    assert round(metrics["MAE"], 2) == 10.20
+    assert round(metrics["MSE"], 2) == 184.89
+    assert round(metrics["RMSE"], 2) == 13.60
+    assert round(metrics["MAPE"] / 100, 2) == 0.39  # the slide writes MAPE as a fraction
+    assert table["abs_error"].isna().iloc[0]  # the first row only starts the recursion
+
+
+def _toy_weekly(n=143, seed=0):
+    rng = np.random.default_rng(seed)
+    weeks = pd.date_range("2010-02-05", periods=n, freq="7D")
+    season = 10 * np.sin(2 * np.pi * np.arange(n) / 52)
+    return pd.Series(100 + season + rng.normal(0, 1, n), index=weeks)
+
+
+def test_cross_validation_folds_only_ever_move_forward():
+    _needs_predictions()
+    cv = forecasting_utils.cross_validate(_toy_weekly(), n_folds=3, horizon=13)
+    assert list(cv["fold"]) == [0, 1, 2]
+    assert cv["train_weeks"].is_monotonic_increasing
+    assert (pd.to_datetime(cv["test_from"]).diff().dropna() > pd.Timedelta(0)).all()
+    assert (cv[["seasonal naive MAPE", "Holt-Winters MAPE"]] > 0).all().all()
+
+
+def test_christmas_cannot_be_tested_by_a_seasonal_model():
+    _needs_predictions()
+    sales = _toy_weekly()
+    check = forecasting_utils.christmas_check(sales)
+    # Every Christmas lies before the first week a 52-week model can be tested on.
+    assert all(week < check["earliest_testable"] for week in check["christmas_weeks"])
+    assert check["earliest_testable"] == sales.index[104]
+    assert check["christmas_mape"] is not None
+
+
+def test_markdown_break_counts_weeks_before_tracking_started():
+    _needs_predictions()
+    weeks = pd.date_range("2011-01-07", periods=10, freq="7D")
+    panel = pd.DataFrame({"Date": weeks, "MarkDown1": [np.nan] * 6 + [1.0] * 4, "MarkDown2": np.nan})
+    result = forecasting_utils.markdown_break(panel, weeks)
+    assert result["first_recorded"] == weeks[6]
+    assert result["weeks_without"] == 6
+
+
+def test_two_sibling_src_packages_coexist_in_one_process():
+    """segmentation/src (sys.path) and predictions/src (package loader) must not shadow each other."""
+    _needs_predictions()
+    from utils import segmentation_utils
+
+    if not segmentation_utils.SIBLING_AVAILABLE:
+        pytest.skip("segmentation sibling not checked out")
+    assert "predictions" in forecasting_utils.tc.__file__
+    assert "segmentation" in segmentation_utils._rfm.__file__
+    assert forecasting_utils.fm.SEASONAL_PERIOD == 52  # relative import inside the package resolved
+
+
+
+def test_sarima_label_follows_the_sibling_defaults():
+    _needs_predictions()
+    assert forecasting_utils.sarima_label() == "SARIMA(1,0,1)(0,1,1,52)"

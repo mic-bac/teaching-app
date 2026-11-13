@@ -190,6 +190,14 @@ st.markdown(
     `segmentation/` repo, not copied from it.
     """
 )
+with st.container(border=True):
+    st.markdown(
+        """
+        💼 **Where you'll use this** — deciding who gets the loyalty programme and who gets a win-back
+        mail, how much you can afford to spend to win a new customer, and writing campaign briefs for
+        groups of real people (*"young families, price-conscious, mostly online"*) instead of averages.
+        """
+    )
 
 transactions, tx_source = cached_transactions()
 personality, personality_source = cached_personality()
@@ -237,7 +245,7 @@ with tab_overview:
         amount of cleverness substitutes for the column you do not have.
         """
     )
-    st.dataframe(S.dataset_roles(), use_container_width=True, hide_index=True)
+    st.dataframe(S.dataset_roles(), width="stretch", hide_index=True)
     st.caption(
         "This is why the lesson uses two datasets. A till receipt records a price and a "
         "product code — never an age — so clustering by demographics is impossible on the "
@@ -247,7 +255,7 @@ with tab_overview:
     st.divider()
     st.subheader("How the lesson fits together")
     st.graphviz_chart(
-        S.segmentation_architecture_dot(tx_source, personality_source), use_container_width=True
+        S.segmentation_architecture_dot(tx_source, personality_source), width="stretch"
     )
     st.caption(
         "Green boxes are real datasets; orange means a synthetic fallback is standing in. "
@@ -283,7 +291,7 @@ with tab_overview:
                     "Share of revenue": "{:.1%}",
                 }
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
         consumer_row, business_row = comparison.iloc[0], comparison.iloc[1]
@@ -341,13 +349,13 @@ with tab_rfm:
     st.divider()
     st.subheader("Scoring, 1 (poor) to 5 (excellent)")
     st.markdown(
-        "Recency runs **backwards** — bought yesterday is *good* — and all three dimensions "
-        "are rank-transformed before binning so that ties do not collapse the quintiles."
+        "Each customer gets a 1–5 score per dimension by **ranking** everyone and cutting the ranking "
+        "into five equal groups. Recency runs **backwards**: bought yesterday is *good*, so it scores 5."
     )
     st.dataframe(
         scored[["Id", "Recency", "Frequency", "Monetary", "R_Score", "F_Score", "M_Score",
                 "RFM_Cell", "RFM_Sum"]].head(10),
-        use_container_width=True, hide_index=True,
+        width="stretch", hide_index=True,
     )
 
     busiest_sum = int(scored["RFM_Sum"].value_counts().idxmax())
@@ -377,7 +385,7 @@ with tab_rfm:
             .round(0)
             .sort_values("Customers", ascending=False)
         )
-        st.dataframe(cube_table, use_container_width=True)
+        st.dataframe(cube_table, width="stretch")
 
     with ladder_col:
         st.markdown("**The business ladder** — ordered rules, first match wins")
@@ -388,7 +396,7 @@ with tab_rfm:
             .round(0)
             .sort_values("Customers", ascending=False)
         )
-        st.dataframe(ladder_table, use_container_width=True)
+        st.dataframe(ladder_table, width="stretch")
 
     correlations = scored[["Recency", "Frequency", "Monetary"]].corr()
     st.caption(
@@ -418,7 +426,7 @@ with tab_rfm:
     )
     fig_rfm.update_traces(marker=dict(size=3, line=dict(width=0)))
     fig_rfm.update_layout(height=620, margin=dict(l=0, r=0, t=10, b=0))
-    st.plotly_chart(fig_rfm, use_container_width=True)
+    st.plotly_chart(fig_rfm, width="stretch")
 
     show_sibling_script("rfm.py", "📄 The full lesson script: segmentation/rfm.py")
 
@@ -430,12 +438,14 @@ with tab_cltv:
     st.subheader("First, measure the retention rate — do not guess it")
     st.markdown(
         r"""
-        The lecture's formula is
+        In plain words, a customer's lifetime value is **what they bring in per year × how many
+        years they are likely to stay (in today's money) − what it cost to win them**. The lecture's
+        formula:
 
         $$LTV_i = GC_i \left(\frac{Rr}{1 - Rr + d}\right) - AC_i$$
 
-        and everything turns on $Rr$, the share of customers who are still here a year from
-        now. It cannot be read off a customer table — it needs **cohorts**: take everyone who
+        Everything turns on $Rr$, the **retention rate** — the share of customers who are still here a
+        year from now. It cannot be read off a customer table — it needs **cohorts**: take everyone who
         first bought in a given month, and count how many come back in each later month.
         """
     )
@@ -448,7 +458,7 @@ with tab_cltv:
         labels=dict(x="Months since first purchase", y="Cohort", color="% retained"),
     )
     fig_cohort.update_layout(height=560, margin=dict(l=0, r=0, t=10, b=0))
-    st.plotly_chart(fig_cohort, use_container_width=True)
+    st.plotly_chart(fig_cohort, width="stretch")
     st.caption(
         "Column 0 is 100% by construction, not as a finding. The empty bottom-left is **not** "
         "zero retention — a cohort acquired three months before the data ends simply cannot "
@@ -465,7 +475,7 @@ with tab_cltv:
     fig_curve.update_traces(selector=dict(name="average"), opacity=1.0,
                             line=dict(width=4, color="black"))
     fig_curve.update_layout(height=420, margin=dict(l=0, r=0, t=10, b=0))
-    st.plotly_chart(fig_curve, use_container_width=True)
+    st.plotly_chart(fig_curve, width="stretch")
     st.caption(
         "Monthly retention looks alarming and is not: most people do not buy gifts every "
         "month. The curve **flattens** rather than falling to zero — an early drop-off, then "
@@ -489,7 +499,7 @@ with tab_cltv:
             band_retention.assign(
                 RetentionRate=lambda t: (t["RetentionRate"] * 100).round(1)
             ).rename(columns={"RetentionRate": "Retention %"}),
-            use_container_width=True,
+            width="stretch",
         )
     show_source(S.annual_retention, "Show the code: measuring Rr from cohorts")
 
@@ -550,18 +560,17 @@ with tab_cltv:
     fig_equity.add_vline(x=retention_rate, line_dash="dot", line_color="red",
                          annotation_text="your setting")
     fig_equity.update_layout(height=400, margin=dict(l=0, r=0, t=30, b=0))
-    st.plotly_chart(fig_equity, use_container_width=True)
+    st.plotly_chart(fig_equity, width="stretch")
     st.caption(
-        "The curve is **convex**: the same one-point improvement in retention is worth far "
-        "more at 90% than at 50%. That is why retention beats discounting as a lever, and why "
-        "averaging retention across a mixed customer base understates the total."
+        "The curve bends **upwards**: one extra point of retention is worth far more at 90% than at "
+        "50%. That is why keeping customers is such a powerful lever — often stronger than any discount."
     )
 
     with st.expander("The sensitivity table, in full"):
         st.dataframe(
             S.sensitivity_frame([0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95],
                                 [0.05, 0.10, 0.15, 0.20]),
-            use_container_width=True,
+            width="stretch",
         )
         st.caption(
             "Moving retention from 60% to 90% multiplies every customer's value ~3.8×. "
@@ -587,7 +596,7 @@ with tab_cltv:
     st.dataframe(
         tier_table.style.format({"Share of equity": "{:.1%}", "Mean_CLTV": "€{:,.0f}",
                                  "Mean_Revenue": "€{:,.0f}"}),
-        use_container_width=True,
+        width="stretch",
     )
 
     show_sibling_script("cltv.py", "📄 The full lesson script: segmentation/cltv.py")
@@ -606,7 +615,7 @@ with tab_cluster:
         producing it.
         """
     )
-    st.dataframe(S.FAMILIES, use_container_width=True, hide_index=True)
+    st.dataframe(S.FAMILIES, width="stretch", hide_index=True)
 
     st.divider()
     st.subheader("How many clusters?")
@@ -623,7 +632,7 @@ with tab_cluster:
                                    name=label))
     fig_k.update_layout(height=380, yaxis_title="Rescaled 0-1 — up is always better",
                         xaxis_title="Number of clusters (k)", margin=dict(l=0, r=0, t=10, b=0))
-    st.plotly_chart(fig_k, use_container_width=True)
+    st.plotly_chart(fig_k, width="stretch")
 
     k = st.slider("Clusters to fit (k)", 2, 8, 4,
                   help="The metrics have a favourite. It is not the one we ship — see below.")
@@ -638,7 +647,7 @@ with tab_cluster:
         "**The metrics narrow the field; a human picks.** Pretending the number chose itself "
         "is the mistake."
     )
-    st.dataframe(sweep.round(3), use_container_width=True, hide_index=True)
+    st.dataframe(sweep.round(3), width="stretch", hide_index=True)
     show_source(S.sweep_k, "Show the code: scoring each k four ways")
 
     st.divider()
@@ -659,7 +668,7 @@ with tab_cluster:
         scores = pd.DataFrame(
             {name: S.score_clustering(X, lab) for name, lab in labels.items()}
         ).T
-        st.dataframe(scores.round(3), use_container_width=True)
+        st.dataframe(scores.round(3), width="stretch")
         st.caption(
             "Noise points (DBSCAN's `-1`) are excluded before scoring — they are not a "
             "cluster, they are the points the algorithm refused to place — and the noise "
@@ -670,9 +679,9 @@ with tab_cluster:
 
         coords, variance = cached_pca()
         st.markdown(
-            f"**Visual inspection** — the 2D projection keeps {variance.sum():.0%} of the "
-            f"variance (PC1 {variance[0]:.0%}, PC2 {variance[1]:.0%}), enough to trust the "
-            "broad picture but not to judge fine boundaries."
+            f"**Visual inspection** — customers have many attributes, so we squeeze them onto a 2D map "
+            f"(PCA) that keeps {variance.sum():.0%} of the differences between them: good enough to see "
+            "the broad picture, not to judge exact borders."
         )
         projection_cols = st.columns(min(len(algorithm_names), 3))
         for column, name in zip(projection_cols, algorithm_names):
@@ -684,7 +693,7 @@ with tab_cluster:
                 fig_pca.update_traces(marker=dict(size=4, line=dict(width=0)))
                 fig_pca.update_layout(height=360, showlegend=False,
                                       margin=dict(l=0, r=0, t=40, b=0))
-                st.plotly_chart(fig_pca, use_container_width=True)
+                st.plotly_chart(fig_pca, width="stretch")
 
         st.divider()
         st.subheader("Are the clusters real? The stability check")
@@ -696,16 +705,14 @@ with tab_cluster:
         if st.button("Run the stability check", help="Refits every selected algorithm five times."):
             st.dataframe(
                 cached_stability(k, tuple(algorithm_names)).round(3),
-                use_container_width=True, hide_index=True,
+                width="stretch", hide_index=True,
             )
             st.caption(
-                "Adjusted Rand index: 1.0 means the same customers grouped together every "
-                "time, 0.0 means chance. Anything you intend to build campaigns on should be "
-                "well above 0.75 — the segments have to survive next quarter's data too. "
-                "But stable is necessary, not sufficient: an algorithm can find the *same "
-                "meaningless* partition every time (DBSCAN's tiny pockets here). So the verdict "
-                "also checks separation — a silhouette below 0.1 means there is no real structure, "
-                "however stable it looks."
+                "**ARI** (agreement): 1.0 = the same customers end up together every time, 0 = random. "
+                "For campaigns you want well above 0.75 — segments must survive next quarter's data. "
+                "But stable is not enough: DBSCAN finds the *same meaningless* tiny groups every time. "
+                "So the verdict also checks the **silhouette** (how clearly groups are separated): "
+                "below 0.1 means there is no real structure, however stable it looks."
             )
         show_source(S.stability, "Show the code: resampling and measuring agreement")
         show_source(S.stability_verdict, "Show the code: the verdict reads stability AND separation")
@@ -717,14 +724,14 @@ with tab_cluster:
         profiles = S.profile_clusters(customers_attr, labels[primary], S.CLUSTERING_FEATURES)
         fingerprints = S.cluster_fingerprints(customers_attr, profiles, S.CLUSTERING_FEATURES)
 
-        st.dataframe(profiles, use_container_width=True)
+        st.dataframe(profiles, width="stretch")
         fig_fingerprint = px.imshow(
             fingerprints.T, text_auto=True, color_continuous_scale="RdBu_r",
             zmin=-2, zmax=2, aspect="auto",
             labels=dict(x="Cluster", y="Feature", color="z-score"),
         )
         fig_fingerprint.update_layout(height=420, margin=dict(l=0, r=0, t=10, b=0))
-        st.plotly_chart(fig_fingerprint, use_container_width=True)
+        st.plotly_chart(fig_fingerprint, width="stretch")
         st.markdown(f"**Reading the fingerprints ({primary}):**")
         for cluster in sorted(fingerprints.index):
             st.markdown(
@@ -775,10 +782,10 @@ with tab_compare:
         labels=dict(x="CLTV tier", y="RFM segment", color="Customers"),
     )
     fig_cross.update_layout(height=480, margin=dict(l=0, r=0, t=10, b=0))
-    st.plotly_chart(fig_cross, use_container_width=True)
+    st.plotly_chart(fig_cross, width="stretch")
 
     st.markdown("**The same table, read as decisions**")
-    st.dataframe(S.segment_action_table(cross_tab), use_container_width=True, hide_index=True)
+    st.dataframe(S.segment_action_table(cross_tab), width="stretch", hide_index=True)
 
     st.divider()
     st.subheader("What each method could not see")
@@ -797,3 +804,13 @@ with tab_compare:
         Three methods, three questions, three data requirements. That is the lesson.
         """
     )
+    with st.container(border=True):
+        st.markdown(
+            """
+🎯 **What to remember**
+- **RFM is quick and cheap** — three numbers from your sales data already sort customers usefully.
+- **CLTV turns segments into euros** — and retention is the number that moves it most, so measure it.
+- **Clustering tells you *who* people are** — but only with the right data, and only if the groups
+  are stable *and* clearly separated.
+"""
+        )

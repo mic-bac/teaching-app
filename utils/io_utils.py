@@ -24,7 +24,7 @@ Nothing runs at import time; the demo is guarded under ``if __name__ ==
 import asyncio
 import concurrent.futures
 import threading
-from multiprocessing import Pool
+from multiprocessing import get_context
 from time import time
 
 import aiohttp
@@ -149,7 +149,8 @@ def run_multiprocess(sites):
     """
     try:
         time_start = time()
-        with Pool(initializer=_set_mp_session) as pool:
+        # forkserver, not fork: safe inside Streamlit's multi-threaded server.
+        with get_context("forkserver").Pool(initializer=_set_mp_session) as pool:
             results = pool.map(_download_on_process, sites)
         elapsed = time() - time_start
         return results, elapsed

@@ -72,6 +72,7 @@ each of these paths exists:
 - `pages/4_Propensity.py` reads `predictions/propensity.py`; `pages/5_Survival.py` reads
   `predictions/survival.py`.
 - `pages/6_Segmentation.py` reads `segmentation/{rfm,cltv,clustering}.py`.
+- `pages/7_Time_Series.py` reads `predictions/timeseries.py`.
 - (When new pages appear, add their `read_text` targets here via step-3 discovery.)
 
 ### B. Refactored logic — utils that can silently diverge (the core check)
@@ -162,8 +163,14 @@ instead of the lesson.
   and synthetic-data notice depend on both.
 - **`stability_verdict`** (segmentation `clustering_core`) is used by both `clustering.py` and the
   app's `stability_frame` — the verdict wording must come from the sibling, not be re-typed.
-- (Future: `utils/forecasting_utils.py` ↔ `predictions/src/{sales_data,ts_core,forecast_models,
-  control_series}.py`.)
+- **`utils/forecasting_utils.py` ↔ `predictions/src/{sales_data,ts_core,forecast_models,
+  control_series}.py`** (loaded as a package via `teaching.load_sibling_package`). Check every
+  re-exported name exists; `prepare(verbose=)` still returns `(chain, stores, depts, source)`;
+  `suitability_report` keys used by `pages/7_Time_Series.py` (`cycles`, `trend_p_value`,
+  `seasonal_strength`, `strongest_lag`, …) still exist. The app re-implements two INLINE steps of
+  `timeseries.py` — the rolling-origin CV loop (`cross_validate`) and the Christmas check
+  (`christmas_check`, -6 weeks offset, 52-week minimum history) — compare those with the script.
+  `slide_smoothing_table` must keep reproducing slides 70/78 (MAE 10.20, RMSE 13.60 at α = 0.4).
 - `tests/test_utils.py` exercises the segmentation re-exports — flag only what it doesn't cover.
 - `tests/test_sibling_alignment.py` regex-reads sibling hyperparameters and compares them with
   the app (category B); trust it for the values it lists and spend the audit on logic.

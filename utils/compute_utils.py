@@ -13,7 +13,7 @@ Nothing in this module runs at import time; the demo is guarded under
 """
 
 from time import time, sleep
-from multiprocessing import Pool, cpu_count
+from multiprocessing import cpu_count, get_context
 
 import numpy as np
 
@@ -48,7 +48,10 @@ def run_parallel(data, n_cpu: int = 4):
     n_workers = min(n_cpu, cpu_count())
     try:
         time_start = time()
-        with Pool(n_workers) as pool:
+        # "forkserver" instead of the default fork: the app runs inside Streamlit's
+        # multi-threaded server, and forking a threaded process can deadlock.
+        # (The sibling script is single-threaded, so it can keep the default.)
+        with get_context("forkserver").Pool(n_workers) as pool:
             results = pool.map(expensive_row_op, data)
         elapsed = time() - time_start
         return results, elapsed

@@ -15,17 +15,20 @@ st.set_page_config(page_title="Teaching App", layout="wide", page_icon="🎓")
 st.title("🎓 Welcome to the Teaching App")
 st.markdown(
     """
-    This is a hands-on **educational app** that brings several lessons together
-    in one place. Explore each topic interactively, run the examples, and see the
-    concepts come to life:
+    The tools behind *"customers also bought"*, churn warnings, customer segments and sales
+    forecasts are not magic — and you can use them yourself. Every lesson here runs **real
+    code on real data**: move a slider, press a button, and watch what happens. No maths
+    degree required; curiosity is enough.
 
     - 🗄️ **Database Basics** — working with PostgreSQL running in Docker.
     - ⚡ **Parallelization** — comparing Serial vs Parallel vs Vectorized computation.
     - 🎯 **Recommender Systems** — content-based, collaborative, and association-rule recommenders.
     - 🔮 **Propensity Models** — look-alike modeling: how likely is a customer to churn?
     - ⏳ **Survival Analysis** — time-to-event: *when* will they churn, not just whether.
+    - 🧩 **Customer Segmentation** — RFM, customer lifetime value and clustering.
+    - 📈 **Time Series** — is a series forecastable at all, and what classical models make of it.
 
-    Pick a lesson below to get started.
+    Pick a lesson below to get started — each one ends with **🎯 What to remember**.
     """
 )
 
@@ -115,6 +118,21 @@ with col6:
             icon="🧩",
         )
 
+col7, col8, col9 = st.columns(3)
+
+with col7:
+    with st.container(border=True):
+        st.markdown("### 📈 Time Series")
+        st.write(
+            "Is this series forecastable at all? Decomposition, stationarity, the four error "
+            "measures, baselines, Holt-Winters and SARIMA — and why Christmas cannot be tested."
+        )
+        st.page_link(
+            "pages/7_Time_Series.py",
+            label="Open Time Series",
+            icon="📈",
+        )
+
 st.divider()
 
 with st.expander("📊 About this dataset"):
@@ -123,5 +141,5 @@ with st.expander("📊 About this dataset"):
         "1,000-row sample produced by the cached `generate_dataset` helper."
     )
     sample = generate_dataset(1000)
-    st.dataframe(sample.head(), use_container_width=True)
+    st.dataframe(sample.head(), width="stretch")
     st.caption(f"Sample shape: {sample.shape[0]} rows × {sample.shape[1]} columns")

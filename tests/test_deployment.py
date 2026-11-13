@@ -31,7 +31,7 @@ def test_every_sibling_the_app_reads_is_listed():
     for path in [*ROOT.glob("pages/*.py"), *ROOT.glob("utils/*.py"), ROOT / "Home.py"]:
         text = path.read_text()
         referenced |= set(re.findall(r'(?:parents\[1\]|ROOT) / "([a-z-]+)"', text))
-        referenced |= set(re.findall(r'load_sibling_module\(\s*"([a-z-]+)"', text))
+        referenced |= set(re.findall(r'load_sibling_(?:module|package)\(\s*"([a-z-]+)"', text))
     missing = referenced - NOT_SIBLINGS - set(manifest()["siblings"])
     assert not missing, f"add these to siblings.toml, or the deployed app lacks them: {missing}"
 

@@ -28,6 +28,12 @@ one interactive tool:
   **customer lifetime value** from a retention rate *measured* on cohorts (and how sharply the
   value moves with that assumption), and **clustering** on demographics and behaviour,
   evaluated without labels (silhouette, stability, a 2D projection).
+- **📈 Time Series** — *is this series forecastable at all?* A suitability report before any
+  model, decomposition and the trend that disappears once sales are deflated by CPI,
+  stationarity (ADF) and ACF/PACF, splitting by time and the four error measures (with the
+  lecture's own Excel smoothing example, reproduced by the real code), baselines,
+  Holt-Winters and SARIMA, rolling-origin cross-validation — and why Christmas cannot be
+  tested with 2.75 seasons of history.
 
 ## Quickstart
 
@@ -112,6 +118,7 @@ pages/
   4_Propensity.py           # Propensity / look-alike modeling lesson UI
   5_Survival.py             # Survival analysis lesson UI
   6_Segmentation.py         # Customer segmentation lesson UI (RFM, CLTV, clustering)
+  7_Time_Series.py          # Time series lesson UI (suitability, decomposition, classical models)
 utils/
   data_generator.py         # @st.cache_data random dataset generator
   db_utils.py               # SQLAlchemy connection + CRUD/introspection/run_query (Postgres → SQLite fallback)
@@ -122,6 +129,7 @@ utils/
   propensity_utils.py       # Churn classification, tuning, metrics, risk segments (+ synthetic fallback)
   survival_utils.py         # Kaplan-Meier, Cox / RSF / Survival SVM, censoring-aware metrics
   segmentation_utils.py     # Thin adapter that imports segmentation/src/* (RFM, CLTV, clustering)
+  forecasting_utils.py      # Thin adapter that imports predictions/src/* (time series, forecasting)
 tests/                      # pytest + Streamlit AppTest suite
 data/                       # Local SQLite fallback DB lives here (gitignored)
 ```
