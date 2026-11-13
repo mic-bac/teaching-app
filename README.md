@@ -81,7 +81,7 @@ falls back to a local SQLite database, so `make install && make run` works on it
 
 ## CI/CD (GitHub Actions)
 
-`.github/workflows/ci-cd.yml` runs on every push and pull request to `develop` and `main`:
+`.github/workflows/ci-cd.yml` runs on every push to `develop` and `main`:
 
 | Job | What it does | When |
 |---|---|---|
@@ -89,8 +89,9 @@ falls back to a local SQLite database, so `make install && make run` works on it
 | **Build & start the deployment image** | builds the `Dockerfile`, starts the container, waits for `/_stcore/health` | after Tests pass |
 | **Deploy to Railway** | `railway up` with the Railway CLI | only on a push to `main` (a merged PR), after both jobs pass |
 
-A PR into `main` is tested against the siblings' `main` branches, so a forgotten sibling
-`develop → main` merge fails here, before anything is deployed. CI has no Kaggle data, the same
+It does not also run on pull requests: a PR from `develop` shows the result of the `develop` push
+run for the same commit. The push to `main` after a merge is tested against the siblings' `main`
+branches, so a forgotten sibling `develop → main` merge fails there, before anything is deployed. CI has no Kaggle data, the same
 as Railway, so it also proves that every page's synthetic fallback works.
 
 **One-time setup** for the deploy job:

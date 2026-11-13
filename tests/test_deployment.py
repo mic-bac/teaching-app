@@ -75,7 +75,8 @@ def test_ci_tests_every_branch_but_deploys_only_from_main():
     workflow = (ROOT / ".github" / "workflows" / "ci-cd.yml").read_text()
     assert "branches: [develop, main]" in workflow
     assert "scripts/siblings.py fetch" in workflow  # CI uses the same sibling rule as the deployment
-    assert "SIBLING_BRANCH: ${{ github.base_ref || github.ref_name }}" in workflow
+    assert "SIBLING_BRANCH: ${{ github.ref_name }}" in workflow
+    assert "pull_request:" not in workflow  # a PR would re-test the commit its push already tested
     deploy = workflow[workflow.index("  deploy:"):]
     assert "needs: [test, docker]" in deploy
     assert "if: github.event_name == 'push' && github.ref == 'refs/heads/main'" in deploy
