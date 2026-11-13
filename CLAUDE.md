@@ -1,6 +1,6 @@
 # CLAUDE.md — Teaching App
 
-Project-local guide for making changes in the right context. Not committed (gitignored).
+Project-local guide for making changes in the right context (tracked in git).
 
 ## What this is
 
@@ -49,14 +49,14 @@ teaching-app/            ← this repo (Streamlit orchestrator; git repo, branch
 | `pages/4_Propensity.py` | `predictions/propensity.py` | ✅ built |
 | `pages/5_Survival.py` | `predictions/survival.py` | ✅ built |
 | `pages/6_Segmentation.py` | `segmentation/` (rfm, cltv, clustering) | ✅ built |
-| object-detection | respective repo | 🔜 **will become its own `pages/N_*.py`** |
+| `pages/7_Time_Series.py` | `predictions/timeseries.py` | ✅ built |
+| `pages/8_Forecasting.py` | `predictions/forecasting.py` | ✅ built |
+| `pages/9_Object_Detection.py` | `object-detection/results/` | ✅ built — **results only** (no torch/YOLO in the app) |
 
-`predictions/timeseries.py` (analysing a series + classical models) and
-`predictions/forecasting.py` (Prophet/XGBoost) are a third topic in that sibling repo and
-are **not** yet surfaced — they belong to a different lecture block. Unlike the two churn
-scripts, their logic lives in importable modules (`predictions/src/{sales_data,ts_core,
-forecast_models,control_series}.py`), so a future page can **import** the sibling like
-`segmentation_utils.py` does rather than re-implement it.
+The time-series lessons import the sibling's pure modules (`predictions/src/{sales_data,
+ts_core,forecast_models,forecast_panel,control_series}.py`) through `utils/forecasting_utils.py`, loaded as
+a package with `teaching.load_sibling_package` (their modules import each other relatively,
+and the name `src` would otherwise collide with `segmentation/src`).
 
 ## Environments & tooling
 
@@ -77,6 +77,9 @@ forecast_models,control_series}.py`), so a future page can **import** the siblin
 - **`st.*` lives only in `Home.py` and `pages/`.** All logic goes in **`utils/` as UI-free,
   importable, unit-testable functions.** `utils/teaching.py` is deliberately Streamlit-free.
 - Imports are `from utils.x import ...` — the app always runs from the repo root.
+- Width: use `width="stretch"` (not the removed `use_container_width`). Process pools go
+  through `compute_utils.fork_pool` (explicit **fork**): Streamlit runs each page as `__main__`,
+  and spawn/forkserver workers re-execute `__main__` — the whole page — so the app hangs.
 - **First call in every page is `st.set_page_config(...)`**, `layout="wide"`.
 - Existing utils: `data_generator.py` (`@st.cache_data`), `db_utils.py` (SQLAlchemy Core,
   Postgres→SQLite), `compute_utils.py` (serial/parallel/vectorized; `expensive_row_op` must
@@ -84,14 +87,24 @@ forecast_models,control_series}.py`), so a future page can **import** the siblin
   `postgres_docker_command`, `architecture_dot`), `io_utils.py`, `recommender_utils.py`,
   `propensity_utils.py` (churn classification; its `load_churn` synthetic fallback is shared
   with), `survival_utils.py` (Kaplan-Meier, Cox/RSF/SVM, censoring-aware metrics),
-  `segmentation_utils.py` (RFM, cohort-measured CLTV, clustering).
+  `segmentation_utils.py` (RFM, cohort-measured CLTV, clustering — imports `segmentation/src/*`
+  incl. `cltv_core`), `forecasting_utils.py` (time series + forecasting — imports
+  `predictions/src/*` as a package; adds the lesson's CV loop, Christmas check and the slides'
+  Excel smoothing example), `detection_utils.py` (reads `object-detection/results/` — exported
+  boxes, training metrics, photo credits — and redraws boxes with Pillow; no torch).
+
+- **Object detection is results-only.** The sibling (AGPL-3.0, Ultralytics YOLO) exports with
+  `export_results.py`; the app never imports `ultralytics`/torch. Only openly licensed photos
+  (credited in `results/CREDITS.md`) are published — the original training photos and weights
+  stay local and git-ignored.
 
 - **Two ways a util relates to its sibling.** Most *re-implement* the sibling's logic, because
   `predictions/{propensity,survival}.py` are `# %%` scripts with top-level side effects and
   cannot be imported (the newer `predictions/src/*` modules are pure, and should be imported).
   `segmentation_utils.py` instead **imports** `segmentation/src/*` directly — those modules are
   already pure and importable, so copying them would duplicate the source of truth and
-  guarantee drift. Prefer importing whenever a sibling exposes a clean `src/`; re-implement
+  guarantee drift (the Recommender likewise imports `recommender/src/groceries_data.py`, via
+  `teaching.load_sibling_module`). Prefer importing whenever a sibling exposes a clean `src/`; re-implement
   only when the sibling is a side-effecting script. Either way the util stays Streamlit-free.
 
 ### Teaching patterns to reuse (this is what makes it a *teaching* app)
@@ -106,11 +119,20 @@ forecast_models,control_series}.py`), so a future page can **import** the siblin
   playground's write-toggle is a *presenter convenience* so a stray `DROP` doesn't derail a
   live demo — not a security control. Don't add hardening beyond that.)
 - **Explain the "why" in docstrings/captions** (see `_resync_id_sequence` for the model).
+- **Write for business students, not mathematicians.** Plain language first, short sentences, no
+  unexplained jargon; formulas from the slides go into a collapsed *"🔎 The maths, if you're
+  curious"* expander. Every lesson page opens with a **💼 Where you'll use this** box (2–3 real job
+  situations) and ends with **🎯 What to remember** (three bullets). The goal is curiosity and
+  confidence — students should leave wanting to use these tools at work.
 - Reuse the sibling repo's real content instead of duplicating it.
 
 ## Testing (required for every change)
 
-- Run with `make test` / `uv run pytest`. Currently 84 tests, all must stay green.
+- Run with `make test` / `uv run pytest`. All tests must stay green (203 as of 2026-11-13).
+- **`tests/test_sibling_alignment.py`** — drift guard: sibling hyperparameters are regex-read and
+  compared with the app. Parameter differences for live-demo runtime are fine but must be
+  recorded there as `"intentional"`; logic differences are not.
+- **Sibling first.** Lesson-content changes start in the sibling repo, then the app follows.
 - **`tests/test_utils.py`** — unit-test every `utils/` helper. Keep them **deterministic**:
   DB tests use a temp **SQLite** file (`create_engine(f"sqlite:///{tmp}")`), never Docker.
 - **`tests/test_app_smoke.py`** — drive each page with `streamlit.testing.v1.AppTest` and
@@ -129,6 +151,27 @@ forecast_models,control_series}.py`), so a future page can **import** the siblin
 5. **`Home.py`** — add an `st.container(border=True)` card + `st.page_link("pages/N_...")`.
 6. **Deps** — `uv add <pkg>`, then `make export-reqs`; update `ENVIRONMENTS.md` status if the
    sibling env changes.
+
+## Deployment & the sibling branch rule
+
+- **Siblings are maintained first, and branches track branches:** app `develop` runs against
+  every sibling's `develop`, app `main` against every sibling's `main` (single-branch siblings
+  like `postgresql` stay on `main`). Merge sibling `develop → main` before or together with
+  the app's `develop → main`. Defined in `siblings.toml`; enforced by `tests/test_deployment.py`.
+- Locally, keep each sibling checked out on the branch matching the app's — check with
+  `make siblings-status`.
+- Railway builds the `Dockerfile`; `scripts/start.sh` clones the siblings **at container
+  start** on the matching branch (`SIBLING_BRANCH`, else `$RAILWAY_GIT_BRANCH`, else `main`), plus
+  public data. A sibling-only change therefore needs just a redeploy, no app commit.
+- **CI/CD** (`.github/workflows/ci-cd.yml`): every push/PR to `develop`/`main` runs the tests
+  against freshly cloned siblings (PR → the target branch's siblings), then builds and
+  health-checks the Docker image; only a push to `main` deploys, via `railway up` (secret
+  `RAILWAY_TOKEN`, variable `RAILWAY_SERVICE`, GitHub environment `production`). Railway's own
+  GitHub auto-deploy must stay off. CI has no Kaggle data, so the synthetic fallbacks are tested too.
+- On Railway, Kaggle datasets are absent → every page needs a synthetic fallback. A new
+  sibling the app reads from must be added to `siblings.toml`.
+- Importing a sibling module: use `utils.teaching.load_sibling_module(repo, "src/x.py")` —
+  several siblings name their package `src`, so plain `from src import` would collide.
 
 ## Git & safety
 

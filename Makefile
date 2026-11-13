@@ -62,6 +62,26 @@ db-stop:  ## Stop the PostgreSQL container (data is preserved)
 	-docker stop $(PG_CONTAINER)
 
 # ---------------------------------------------------------------------------
+# Siblings & deployment (Railway builds the Dockerfile)
+# ---------------------------------------------------------------------------
+.PHONY: siblings
+siblings:  ## Clone missing sibling repos (branch matching the app's) + public data
+	python3 scripts/siblings.py fetch
+	python3 scripts/siblings.py data
+
+.PHONY: siblings-status
+siblings-status:  ## Show which branch each local sibling is on vs. expected
+	python3 scripts/siblings.py status
+
+.PHONY: docker-build
+docker-build:  ## Build the deployment image exactly as Railway does
+	docker build -t teaching-app .
+
+.PHONY: docker-run
+docker-run:  ## Run the deployment image at http://localhost:8501 (siblings: develop)
+	docker run --rm -p 8501:8501 -e SIBLING_BRANCH=develop teaching-app
+
+# ---------------------------------------------------------------------------
 # Housekeeping
 # ---------------------------------------------------------------------------
 .PHONY: clean

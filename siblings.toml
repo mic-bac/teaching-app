@@ -1,0 +1,48 @@
+# Sibling lesson repos the app reads from — and which branch a deployment uses.
+#
+# Rule: the siblings are maintained FIRST, so a deployment simply tracks them by
+# branch. The app's `develop` runs against each sibling's `develop`, the app's
+# `main` against each sibling's `main`. Merge a sibling's develop -> main before
+# (or together with) the app's develop -> main.
+#
+# The deployment fetches the siblings when the container STARTS (see Dockerfile),
+# so a restart/redeploy always picks up the latest commit of the matching branch.
+# Local development is unaffected: siblings already checked out are left alone.
+#
+#   make siblings          clone missing siblings (+ public data) for the current branch
+#   make siblings-status   show which branch each local sibling is on vs. expected
+
+[branches]
+# app branch -> sibling branch; anything else (feature branches) uses `default`.
+main = "main"
+develop = "develop"
+default = "main"
+
+[siblings.parallelization]
+url = "https://github.com/mic-bac/parallelization.git"
+
+[siblings.postgresql]
+url = "https://github.com/mic-bac/postgresql.git"
+only_branch = "main"  # a setup guide with a single branch
+
+[siblings.predictions]
+url = "https://github.com/mic-bac/predictions.git"
+
+[siblings.recommender]
+url = "https://github.com/mic-bac/recommender.git"
+
+[siblings.segmentation]
+url = "https://github.com/mic-bac/segmentation.git"
+
+[siblings.object-detection]
+url = "https://github.com/mic-bac/object-detection.git"
+# The app only reads object-detection/results/ (exported detections, metrics,
+# openly licensed photos) — no weights, no torch, no YOLO in the app.
+
+# Public datasets a deployment can download without credentials. Everything
+# else (Kaggle downloads, the 65 MB UCI retail file) is left out on purpose:
+# the lessons fall back to synthetic data and say so on screen.
+[[data]]
+name = "MovieLens latest-small (GroupLens)"
+url = "https://files.grouplens.org/datasets/movielens/ml-latest-small.zip"
+extract = { "ml-latest-small/movies.csv" = "recommender/data/movie/movies.csv", "ml-latest-small/ratings.csv" = "recommender/data/movie/ratings.csv" }

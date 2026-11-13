@@ -81,27 +81,39 @@ def prepare_survival(frame: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray, lis
     scikit-survival estimator expects. ``event`` is whether churn was observed,
     ``time`` is how long we watched the customer (their tenure in months).
 
-    Categoricals become dummies and numerics are standardised, because Cox and
-    the SVM both optimise over a linear score where scale matters.
+    Categoricals become dummies. Numerics are standardised later, in
+    ``split_survival`` — *after* the split, so the test customers never
+    influence the scaling (split first, then preprocess).
     """
     frame = frame.copy()
     frame["event"] = frame["Churn"].astype(bool)
     frame["time"] = frame["Tenure"].astype(float)
 
     feature_cols = [c for c in frame.columns if c not in EXCLUDED_FEATURES]
-    X = pd.get_dummies(frame[feature_cols], drop_first=True)
-
-    numeric_cols = frame[feature_cols].select_dtypes(include=[np.number]).columns
-    X[numeric_cols] = StandardScaler().fit_transform(X[numeric_cols])
-    X = X.astype(float)  # scikit-survival wants a plain float matrix
+    X = pd.get_dummies(frame[feature_cols], drop_first=True).astype(float)  # sksurv wants floats
 
     y = np.array(list(zip(frame["event"], frame["time"])), dtype=[("event", bool), ("time", float)])
     return X, y, list(X.columns)
 
 
 def split_survival(X: pd.DataFrame, y: np.ndarray, test_size: float = 0.3, random_state: int = 42):
-    """Train/test split stratified on the event indicator."""
-    return train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y["event"])
+    """Train/test split stratified on the event indicator, then standardise.
+
+    Cox and the SVM optimise over a linear score where scale matters, so the
+    continuous features are standardised — but only *after* the split, with the
+    scaler fitted on the training customers alone. The test customers are then
+    transformed with those numbers, exactly as a new customer would be after
+    deployment. 0/1 dummy columns are left as they are.
+    """
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state, stratify=y["event"]
+    )
+    continuous = [c for c in X_train.columns if X_train[c].nunique() > 2]
+    X_train, X_test = X_train.copy(), X_test.copy()
+    scaler = StandardScaler().fit(X_train[continuous])
+    X_train[continuous] = scaler.transform(X_train[continuous])
+    X_test[continuous] = scaler.transform(X_test[continuous])
+    return X_train, X_test, y_train, y_test
 
 
 # ===========================================================================

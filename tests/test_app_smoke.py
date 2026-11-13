@@ -24,6 +24,9 @@ PAGES = [
     "pages/4_Propensity.py",
     "pages/5_Survival.py",
     "pages/6_Segmentation.py",
+    "pages/7_Time_Series.py",
+    "pages/8_Forecasting.py",
+    "pages/9_Object_Detection.py",
 ]
 
 
@@ -112,6 +115,22 @@ def test_recommender_page_content_based_selectbox():
     assert len(at.dataframe) >= 1  # a recommendations table is shown
 
 
+def test_recommender_page_explains_synthetic_groceries(monkeypatch):
+    """Without the Kaggle CSV the page runs on synthetic baskets and says so."""
+    from utils import recommender_utils
+
+    synthetic = recommender_utils._groceries_module().make_synthetic_groceries()
+    monkeypatch.setattr(recommender_utils, "load_groceries", lambda: (synthetic, "synthetic"))
+    import streamlit as st
+
+    st.cache_data.clear()  # earlier tests may have cached the real file
+    at = AppTest.from_file(str(ROOT / "pages/3_Recommender.py"), default_timeout=180)
+    at.run()
+    assert not at.exception
+    assert any("Synthetic baskets" in i.value for i in at.info)
+    st.cache_data.clear()  # don't leak the synthetic data into later tests
+
+
 def test_recommender_page_matrix_factorization_trains():
     at = AppTest.from_file(str(ROOT / "pages/3_Recommender.py"), default_timeout=180)
     at.run()
@@ -185,8 +204,8 @@ def test_survival_page_shows_kaplan_meier_readouts():
     assert sample, "sample-size control not found"
     sample[0].set_value(1000).run()
     assert not at.exception
-    # S(t) readouts are rendered straight from the Kaplan-Meier curve.
-    assert any(m.label.startswith("S(12") for m in at.metric)
+    # Survival readouts are rendered straight from the Kaplan-Meier curve.
+    assert any(m.label == "Still customers after 12 months" for m in at.metric)
 
 
 def test_survival_page_trains_models_and_scores_them_over_time():
@@ -234,3 +253,44 @@ def test_segmentation_page_reacts_to_the_retention_slider():
     assert not at.exception, [str(e) for e in at.exception]
     # Customer equity is reported as a metric and must survive the change.
     assert any("equity" in m.label.lower() for m in at.metric)
+
+
+def test_time_series_page_reproduces_the_slide_and_fits_sarima():
+    at = AppTest.from_file(str(ROOT / "pages/7_Time_Series.py"), default_timeout=300)
+    at.run()
+    assert not at.exception
+    shown = [(m.label, m.value) for m in at.metric]
+    # The lecture's Excel example (slides 70/78), reproduced by the real code.
+    assert ("RMSE", "13.60") in shown and ("MSE", "184.89") in shown
+    sarima = next(b for b in at.button if "SARIMA" in b.label)
+    sarima.click().run()
+    assert not at.exception
+    assert "SARIMA MAPE" in [m.label for m in at.metric]
+
+
+def test_forecasting_page_runs_every_experiment():
+    at = AppTest.from_file(str(ROOT / "pages/8_Forecasting.py"), default_timeout=300)
+    at.run()
+    assert not at.exception
+    labels = [m.label for m in at.metric]
+    assert "Prophet MAPE" in labels and "Trees actually used" in labels
+    for name in ("department model", "Run the experiment", "Run the comparison", "Holt-Winters model per store"):
+        next(b for b in at.button if name in b.label).click().run()
+        assert not at.exception, name
+    assert "MAPE per department" in [m.label for m in at.metric]
+
+
+@pytest.mark.skipif(
+    not (ROOT / "object-detection" / "results" / "detections.json").exists(),
+    reason="object-detection sibling results not present",
+)
+def test_object_detection_threshold_slider_changes_the_boxes():
+    at = _run("pages/9_Object_Detection.py")
+    assert not at.exception
+    shown = lambda: next(m for m in at.metric if m.label == "Boxes shown").value  # noqa: E731
+    loose = shown()
+    at.slider(key="see_threshold").set_value(0.9).run()
+    assert not at.exception
+    assert int(shown()) <= int(loose)
+    at.selectbox(key="compare_photo").set_value(at.selectbox(key="compare_photo").options[-1]).run()
+    assert not at.exception

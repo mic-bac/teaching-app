@@ -39,6 +39,12 @@ def show_source(obj, label: str) -> None:
 
 
 st.title("🗄️ Database Basics")
+with st.container(border=True):
+    st.markdown(
+        "💼 **Where you'll use this** — almost everywhere: sales, customers and orders live in databases. "
+        "A few lines of SQL get you the numbers yourself — *revenue by region*, *orders this week* — "
+        "instead of waiting for someone else's report."
+    )
 
 # ---------------------------------------------------------------------------
 # Connect once (with graceful fallback) and make sure the schema exists.
@@ -70,7 +76,7 @@ connected to **right now**:
 """
     )
 
-    st.graphviz_chart(architecture_dot(backend), use_container_width=True)
+    st.graphviz_chart(architecture_dot(backend), width="stretch")
 
     st.markdown(
         """
@@ -110,7 +116,7 @@ with tab_data:
         "Every relational table has a schema: named, typed columns. This one is "
         "reflected live from the database via SQLAlchemy's inspector."
     )
-    st.dataframe(get_schema(engine), use_container_width=True, hide_index=True)
+    st.dataframe(get_schema(engine), width="stretch", hide_index=True)
 
     # ----- Seed / remove sample data -------------------------------------
     st.subheader("Need some data?")
@@ -163,7 +169,7 @@ with tab_data:
 
     # ----- Live table -----------------------------------------------------
     st.subheader("All sales")
-    st.dataframe(fetch_sales(engine), use_container_width=True)
+    st.dataframe(fetch_sales(engine), width="stretch")
     show_source(fetch_sales, "🐍 The function that reads the table")
     with st.expander("🔎 The SQL SQLAlchemy generates for the read"):
         st.code(str(select(sales).order_by(sales.c.id)), language="sql")
@@ -219,8 +225,18 @@ with tab_sql:
             st.error(message)
         elif result_df is not None:
             st.success(message)
-            st.dataframe(result_df, use_container_width=True)
+            st.dataframe(result_df, width="stretch")
         else:
             st.success(message)
 
     show_source(run_query, "🐍 How the query runs (and how writes are guarded)")
+
+    with st.container(border=True):
+        st.markdown(
+            """
+🎯 **What to remember**
+- **A database is a set of tables you can ask questions** — SQL is the language for asking.
+- **`SELECT … GROUP BY …`** turns raw rows into business answers (totals per region, per month…).
+- **Python and SQL work together:** the app writes and reads the same table you just queried.
+"""
+        )

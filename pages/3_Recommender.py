@@ -142,7 +142,8 @@ def cached_baseline():
 
 @st.cache_data(show_spinner=False)
 def cached_transactions():
-    return R.build_transactions(cached_groceries())
+    frame, _source = cached_groceries()
+    return R.build_transactions(frame)
 
 
 @st.cache_data(show_spinner=False)
@@ -168,6 +169,14 @@ dataset you can poke at:
 Every tab shows the **real code** that produces the result, not a slide summary.
 """
 )
+with st.container(border=True):
+    st.markdown(
+        """
+💼 **Where you'll use this** — "customers also bought" in a web shop, next-best-offer in a newsletter,
+cross-selling at the checkout, or suggesting the right article, course or product to an internal user.
+Recommenders quietly drive a large share of online revenue.
+"""
+    )
 
 tab_overview, tab_cbf, tab_nb, tab_mf, tab_ar = st.tabs(
     [
@@ -256,7 +265,7 @@ involved, so this works even for brand-new movies.
         st.markdown(f"**Because you liked _{choice}_, you might also like:**")
         st.dataframe(
             recs.style.format({"similarity": "{:.3f}"}),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
         ils = R.intra_list_similarity(list(recs["title"]), tfidf, title_to_idx)
@@ -291,7 +300,7 @@ involved, so this works even for brand-new movies.
         else:
             st.dataframe(
                 profile_recs.style.format({"similarity": "{:.3f}"}),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
     else:
@@ -310,7 +319,7 @@ involved, so this works even for brand-new movies.
             title="Movies arranged by genre similarity (TF-IDF → PCA)",
         )
         fig.update_layout(legend_title_text="")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     show_source(R.build_tfidf, "🐍 How TF-IDF is built")
     show_source(R.get_recommendations, "🐍 How recommendations are ranked")
@@ -345,9 +354,17 @@ methods find the nearest *neighbors* by cosine similarity:
         ub = R.get_user_based_recommendations(uid, user_item, user_sim)
         st.markdown("**Recommended for this user (weighted by neighbor similarity):**")
         st.dataframe(
-            ub.rename("score").reset_index().rename(columns={"title": "movie"}),
-            use_container_width=True,
+            ub.reset_index().rename(
+                columns={"title": "movie", "index": "movie", "neighbors_who_rated": "raters"}
+            ).style.format({"score": "{:.2f}"}),
+            width="stretch",
             hide_index=True,
+        )
+        st.caption(
+            "Scores are averages over the 30 most similar users; `raters` is how many of them "
+            "rated the movie, and at least **5** must have. Without that guard the top of the list is "
+            "obscure films one neighbour gave 5 stars — all tied at 5.0, in arbitrary order. "
+            "That is the *sparsity problem* from the slides."
         )
         with st.expander(f"What user {uid} already rated highly"):
             top_rated = (
@@ -356,7 +373,7 @@ methods find the nearest *neighbors* by cosine similarity:
                 .sort_values("rating", ascending=False)[["title", "rating"]]
                 .head(10)
             )
-            st.dataframe(top_rated, use_container_width=True, hide_index=True)
+            st.dataframe(top_rated, width="stretch", hide_index=True)
 
     with col_item:
         st.subheader("🎬 Item-based")
@@ -370,7 +387,7 @@ methods find the nearest *neighbors* by cosine similarity:
             st.markdown(f"**Movies most similar to _{movie}_ by co-rating:**")
             st.dataframe(
                 ib.rename("similarity").reset_index().rename(columns={"index": "movie"}),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -403,10 +420,10 @@ The simplest sensible guess corrects for two biases:
 
 $$\hat{r}(u,i) = \mu + b_u + b_i$$
 
-**μ** is the global average rating, **bᵤ** says whether a user rates high or low in
-general, and **bᵢ** says whether a movie is loved or panned. It's robust and easy
-to read — but every user gets the *same* ranking, just shifted. Pick a user and a
-movie to see the decomposition:
+In words: **predicted rating = the average rating + "this user rates generously (or
+strictly)" + "this movie is loved (or panned)"**. μ is the overall average, bᵤ the user's
+habit, bᵢ the movie's reputation. Robust and easy to read — but every user gets the *same*
+ranking, just shifted. Pick a user and a movie to see the pieces:
 """
     )
     c1, c2 = st.columns(2)
@@ -441,9 +458,11 @@ Matrix factorization adds a short **latent-factor** vector to each user and movi
 
 $$\hat{r}(u,i) = \mu + b_u + b_i + p_u \cdot q_i$$
 
-The dot product $p_u \cdot q_i$ captures dimensions the model discovers on its own
-(*"action-ness"*, *"for-kids-ness"*). We learn everything with **stochastic
-gradient descent** — click below to watch the training error fall.
+In words: the model gives every user and every movie a short list of hidden "taste
+scores" — think *action-ness* or *for-kids-ness* — which it discovers **on its own** from
+the ratings. A user and a movie that match on these scores get a boost. It learns by making
+a guess, checking the error, and nudging the numbers a little — over and over (each full
+pass is one *epoch*). Click below and watch the error fall.
 """
     )
 
@@ -492,9 +511,14 @@ gradient descent** — click below to watch the training error fall.
             rec_user, model, movies, ratings, u2i, i2i, i2it, num_recommendations=10
         )
         st.dataframe(
-            mf_recs.style.format({"predicted_rating": "{:.2f}"}),
-            use_container_width=True,
+            mf_recs.style.format({"predicted_rating": "{:.2f}", "model_score": "{:.3f}"}),
+            width="stretch",
             hide_index=True,
+        )
+        st.caption(
+            "Ranked on `model_score`, the uncapped prediction. A generous rater's favourites "
+            "can all score above 5 stars; capped to the star scale (`predicted_rating`) they "
+            "would tie at 5.00 and the model's ordering would be lost."
         )
 
         with st.expander("🗺️ Show the learned 2D 'taste space' (PCA of movie factors)"):
@@ -507,7 +531,7 @@ gradient descent** — click below to watch the training error fall.
                 x="x", y="y", hover_name="title", hover_data=["genres"],
                 title="Movies close together are rated similarly (learned factors → PCA)",
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     else:
         st.info("Set the number of epochs and click **🚀 Train the model** to begin.")
 
@@ -535,7 +559,30 @@ threshold, then turns them into rules.
 """
     )
 
+    try:
+        _groceries, groceries_source = cached_groceries()
+    except FileNotFoundError as exc:
+        # The sibling checkout predates its groceries module (develop not pulled /
+        # pushed yet). Last tab on the page, so stopping here costs nothing else.
+        st.warning(f"The recommender sibling is older than this app expects: {exc}. "
+                   "Pull its branch locally, or push it so a deployment picks it up.")
+        st.stop()
     transactions = cached_transactions()
+    if groceries_source == "synthetic":
+        st.info(
+            "**Synthetic baskets.** The real Groceries file is a Kaggle download and is not "
+            "available here, so the sibling repo generated baskets in the same format — with "
+            "**planted shopping missions**. That makes this a test you can grade: the strongest "
+            "rules below should recover exactly these missions, while popular staples like "
+            "*whole milk* come out at lift ≈ 1 — frequent, but not associated."
+        )
+        st.dataframe(R.planted_missions(), width="stretch", hide_index=True)
+    else:
+        st.caption(
+            "Real receipts from the Kaggle Groceries dataset. Expect *weak* associations "
+            "(lift rarely above ~1.6): baskets here are a member's purchases on one day, "
+            "only ~2.6 items each — real data is noisy."
+        )
     st.caption(
         f"{transactions.shape[0]:,} baskets · {transactions.shape[1]} distinct items "
         "(each basket = one member on one day)."
@@ -559,7 +606,7 @@ threshold, then turns them into rules.
         color=support.values, color_continuous_scale="Blues",
     )
     fig_supp.update_layout(yaxis={"categoryorder": "total ascending"}, coloraxis_showscale=False)
-    st.plotly_chart(fig_supp, use_container_width=True)
+    st.plotly_chart(fig_supp, width="stretch")
 
     if len(rules) == 0:
         st.warning("No rules at these thresholds — try lowering support or confidence.")
@@ -570,9 +617,10 @@ threshold, then turns them into rules.
             top.rename(columns={"rule_str": "rule"}).style.format(
                 {"support": "{:.4f}", "confidence": "{:.3f}", "lift": "{:.2f}"}
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
+        st.info(R.read_rule(rules.nlargest(1, "lift").iloc[0], transactions.shape[0]))
 
         st.subheader("Support vs. confidence (bubble size & color = lift)")
         fig_scatter = px.scatter(
@@ -580,16 +628,24 @@ threshold, then turns them into rules.
             color_continuous_scale="Viridis", hover_name="rule_str",
             labels={"support": "Support", "confidence": "Confidence", "lift": "Lift"},
         )
-        st.plotly_chart(fig_scatter, use_container_width=True)
+        st.plotly_chart(fig_scatter, width="stretch")
 
         st.subheader("Rule network (top rules by lift)")
-        st.plotly_chart(_rules_network(rules), use_container_width=True)
+        st.plotly_chart(_rules_network(rules), width="stretch")
 
         st.divider()
         st.subheader("🛒 Frequently bought together")
-        antecedent_items = sorted({item for a in rules["antecedents"] for item in a})
-        default_i = antecedent_items.index("whole milk") if "whole milk" in antecedent_items else 0
+        single_rules = rules[rules["antecedents"].apply(len) == 1]
+        antecedent_items = sorted({next(iter(a)) for a in single_rules["antecedents"]})
+        # Start on the item with the strongest single-item rule; whole milk stays in
+        # the list on purpose — pick it to see that popular is not the same as related.
+        strongest = next(iter(single_rules.nlargest(1, "lift")["antecedents"].iloc[0])) if len(single_rules) else None
+        default_i = antecedent_items.index(strongest) if strongest in antecedent_items else 0
         basket_item = st.selectbox("A customer just added…", antecedent_items, index=default_i)
+        st.caption(
+            "Only rules whose *if*-side is exactly this item, and only with lift > 1. "
+            "Try **whole milk**: in almost every basket, yet associated with nothing in particular."
+        )
         basket = R.get_basket_recommendations(basket_item, rules)
         if isinstance(basket, str):
             st.warning(basket)
@@ -597,10 +653,22 @@ threshold, then turns them into rules.
             st.markdown(f"**Suggest alongside _{basket_item}_:**")
             st.dataframe(
                 basket.style.format({"support": "{:.4f}", "confidence": "{:.3f}", "lift": "{:.2f}"}),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
     show_source(R.run_apriori, "🐍 Running Apriori")
     show_source(R.get_basket_recommendations, "🐍 Turning rules into recommendations")
     show_sibling_script("association_rule_mining.py", "📄 The full sibling script")
+
+    with st.container(border=True):
+        st.markdown(
+            """
+🎯 **What to remember**
+- **Three data sources, three methods:** item descriptions → content-based, ratings →
+  collaborative filtering, shopping baskets → association rules.
+- **Every method needs evidence.** A recommendation backed by one rating or one basket is noise;
+  guards like *"at least 5 neighbours"* or *"lift > 1"* keep it honest.
+- **Popular is not the same as related** — lift is the number that tells them apart.
+"""
+        )

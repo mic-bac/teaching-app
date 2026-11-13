@@ -1,0 +1,19 @@
+# Keep the build context to the app itself. The siblings are fetched inside the
+# image at their pinned commits (see siblings.toml) — never copied from a local
+# checkout, which may carry uncommitted changes.
+/object-detection/
+/parallelization/
+/postgresql/
+/predictions/
+/recommender/
+/segmentation/
+
+.git/
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+data/*.db
+data/*.sqlite
+.claude/

@@ -1,0 +1,136 @@
+# CI/CD for the Teaching App.
+#
+#   every push / PR to develop or main:  test  ->  docker (build the Railway image, start it, health check)
+#   push to main (i.e. a merged PR):     ... ->  deploy to Railway
+#
+# The sibling lesson repos are separate public repos. CI clones them exactly as the
+# deployment does (scripts/siblings.py, rules in siblings.toml): app `develop` is
+# tested against every sibling's `develop`, app `main` against every sibling's
+# `main`. A PR into main is therefore tested against the siblings' main — if a
+# sibling's develop -> main merge is missing, this is where it shows.
+#
+# Kaggle datasets are not available here (same as on Railway): the lessons and
+# tests use the siblings' synthetic fallbacks.
+#
+# One-time setup for the deploy job (GitHub repo -> Settings):
+#   - Environments -> New environment "production" (optionally add yourself as
+#     required reviewer to approve each deploy)
+#   - in "production": secret   RAILWAY_TOKEN   = a Railway *project token* for the
+#                                                 production environment
+#                      variable RAILWAY_SERVICE = the Railway service name or ID
+#   - In Railway, turn OFF the service's own GitHub auto-deploy, otherwise every
+#     merge is deployed twice (once untested by Railway, once by this workflow).
+
+name: CI/CD
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run per branch/PR; a newer push cancels an outdated run — except on main,
+  # where a run may be deploying and must finish.
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # The app branch the siblings must match: the PR's target branch for pull
+  # requests, otherwise the pushed branch (other branches fall back to the
+  # `default` in siblings.toml).
+  SIBLING_BRANCH: ${{ github.base_ref || github.ref_name }}
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv (Python version from .python-version)
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Fetch sibling lesson repos + public data
+        run: |
+          python3 scripts/siblings.py fetch
+          python3 scripts/siblings.py data
+
+      - name: Install the app environment from the lockfile
+        run: uv sync --frozen
+
+      - name: Run the test suite
+        run: uv run pytest -q
+
+  docker:
+    name: Build & start the deployment image
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the image exactly as Railway does (Dockerfile)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: teaching-app:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start the container and wait for the health check
+        run: |
+          docker run -d --name app -p 8501:8501 -e SIBLING_BRANCH="$SIBLING_BRANCH" teaching-app:ci
+          # The container clones the siblings on start, then serves; allow ~5 min,
+          # like Railway's healthcheckTimeout in railway.json.
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8501/_stcore/health | grep -q ok; then
+              echo "healthy after ~$((i * 5)) s"; docker logs app | head -20; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::container did not become healthy"; docker logs app; exit 1
+
+      - name: Stop the container
+        if: always()
+        run: docker rm -f app || true
+
+  deploy:
+    name: Deploy to Railway
+    needs: [test, docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Railway CLI
+        run: npm install --global @railway/cli@4
+
+      - name: Deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_SERVICE: ${{ vars.RAILWAY_SERVICE }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ] || [ -z "$RAILWAY_SERVICE" ]; then
+            echo "::error::Set secret RAILWAY_TOKEN and variable RAILWAY_SERVICE in the 'production' environment (see the top of this file)."
+            exit 1
+          fi
+          # --ci streams the build logs and fails this step if the Railway build fails.
+          railway up --ci --service "$RAILWAY_SERVICE"

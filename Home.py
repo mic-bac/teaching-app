@@ -15,17 +15,12 @@ st.set_page_config(page_title="Teaching App", layout="wide", page_icon="🎓")
 st.title("🎓 Welcome to the Teaching App")
 st.markdown(
     """
-    This is a hands-on **educational app** that brings several lessons together
-    in one place. Explore each topic interactively, run the examples, and see the
-    concepts come to life:
+    The tools behind *"customers also bought"*, churn warnings, customer segments, sales
+    forecasts and photo recognition are not magic — and you can use them yourself. Every lesson here runs **real
+    code on real data**: move a slider, press a button, and watch what happens. No maths
+    degree required; curiosity is enough.
 
-    - 🗄️ **Database Basics** — working with PostgreSQL running in Docker.
-    - ⚡ **Parallelization** — comparing Serial vs Parallel vs Vectorized computation.
-    - 🎯 **Recommender Systems** — content-based, collaborative, and association-rule recommenders.
-    - 🔮 **Propensity Models** — look-alike modeling: how likely is a customer to churn?
-    - ⏳ **Survival Analysis** — time-to-event: *when* will they churn, not just whether.
-
-    Pick a lesson below to get started.
+    Pick a lesson below to get started — each one ends with **🎯 What to remember**.
     """
 )
 
@@ -39,8 +34,7 @@ with col1:
     with st.container(border=True):
         st.markdown("### 🗄️ Database Basics")
         st.write(
-            "Learn the fundamentals of relational databases using PostgreSQL "
-            "running inside Docker. Connect, query, and explore real data."
+            "Where does a company's data live, and how do you get your own numbers out of it? Ask a real database a question in a few lines of SQL."
         )
         st.page_link(
             "pages/1_Database_Basics.py",
@@ -52,8 +46,7 @@ with col2:
     with st.container(border=True):
         st.markdown("### ⚡ Parallelization")
         st.write(
-            "See how the same computation performs when run Serially, in "
-            "Parallel, and Vectorized — and understand why it matters."
+            "Why does this report take an hour? Race the same job three ways and see which trick makes it fast — and which one only looks clever."
         )
         st.page_link(
             "pages/2_Parallelization.py",
@@ -65,8 +58,7 @@ with col3:
     with st.container(border=True):
         st.markdown("### 🎯 Recommender Systems")
         st.write(
-            "Explore how Netflix- and Amazon-style recommenders work: content-based "
-            "filtering, collaborative filtering, and market-basket association rules."
+            "How do Netflix and Amazon know what to suggest? Three approaches on real ratings and receipts: similar items, similar people, bought together."
         )
         st.page_link(
             "pages/3_Recommender.py",
@@ -80,8 +72,7 @@ with col4:
     with st.container(border=True):
         st.markdown("### 🔮 Propensity Models")
         st.write(
-            "Look-alike modeling: score every customer's probability of churning, "
-            "compare three model families, tune them, and cut the scores into risk segments."
+            "Which customers are about to leave? Give every customer a churn risk score, compare three models, and decide who gets the retention offer."
         )
         st.page_link(
             "pages/4_Propensity.py",
@@ -93,8 +84,7 @@ with col5:
     with st.container(border=True):
         st.markdown("### ⏳ Survival Analysis")
         st.write(
-            "Time-to-event modeling: Kaplan-Meier curves, censored data, Cox and "
-            "survival forests — predicting *when* a customer leaves, not just whether."
+            "Not just *whether* a customer leaves, but *when*. Read retention curves and see what speeds up or delays the goodbye."
         )
         st.page_link(
             "pages/5_Survival.py",
@@ -106,13 +96,50 @@ with col6:
     with st.container(border=True):
         st.markdown("### 🧩 Customer Segmentation")
         st.write(
-            "RFM scoring, customer lifetime value from measured cohort retention, and "
-            "clustering — who your customers are, and what each of them is worth."
+            "Who are your best customers, and what is each one worth? Sort them by buying behaviour, estimate lifetime value, and find natural groups."
         )
         st.page_link(
             "pages/6_Segmentation.py",
             label="Open Customer Segmentation",
             icon="🧩",
+        )
+
+col7, col8, col9 = st.columns(3)
+
+with col7:
+    with st.container(border=True):
+        st.markdown("### 📈 Time Series")
+        st.write(
+            "Can next quarter's sales be forecast at all? Check the data first, then try the classic methods — and learn why Christmas is hard to test."
+        )
+        st.page_link(
+            "pages/7_Time_Series.py",
+            label="Open Time Series",
+            icon="📈",
+        )
+
+with col8:
+    with st.container(border=True):
+        st.markdown("### 🔮 Forecasting")
+        st.write(
+            "Are the famous tools (Prophet, XGBoost) worth it? Sometimes — see when they win, and when \"same week last year\" is hard to beat."
+        )
+        st.page_link(
+            "pages/8_Forecasting.py",
+            label="Open Forecasting",
+            icon="🔮",
+        )
+
+with col9:
+    with st.container(border=True):
+        st.markdown("### 🍝 Object Detection")
+        st.write(
+            "How does a computer find things in a photo? See what a free model detects, and how 50 labelled pictures teach it something new."
+        )
+        st.page_link(
+            "pages/9_Object_Detection.py",
+            label="Open Object Detection",
+            icon="🍝",
         )
 
 st.divider()
@@ -123,5 +150,5 @@ with st.expander("📊 About this dataset"):
         "1,000-row sample produced by the cached `generate_dataset` helper."
     )
     sample = generate_dataset(1000)
-    st.dataframe(sample.head(), use_container_width=True)
+    st.dataframe(sample.head(), width="stretch")
     st.caption(f"Sample shape: {sample.shape[0]} rows × {sample.shape[1]} columns")

@@ -13,7 +13,8 @@ Nothing in this module runs at import time; the demo is guarded under
 """
 
 from time import time, sleep
-from multiprocessing import Pool, cpu_count
+import warnings
+from multiprocessing import cpu_count, get_context
 
 import numpy as np
 
@@ -38,6 +39,27 @@ def run_serial(data):
     return results, elapsed
 
 
+def fork_pool(processes: int | None = None, **kwargs):
+    """A process pool that starts workers by **fork** — on purpose, and explicitly.
+
+    Streamlit runs each page as Python's ``__main__`` module. The "spawn" and
+    "forkserver" start methods re-execute ``__main__`` in every worker, which
+    means re-running the whole *page* (data loading, model training, even a new
+    pool) in each worker — the app hangs. ``fork`` copies the running process
+    instead and never re-runs ``__main__``. It is requested explicitly because
+    Python 3.14 makes "forkserver" the default on Linux.
+
+    Python warns that forking a multi-threaded process (Streamlit's server is
+    one) *can* deadlock if another thread holds a lock at that instant. For a
+    short-lived worker pool in a single-user demo that risk is far smaller than
+    the certain hang above, so that one warning is silenced here — nowhere else.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*use of fork\\(\\) may lead to deadlocks.*",
+                                category=DeprecationWarning)
+        return get_context("fork").Pool(processes, **kwargs)
+
+
 def run_parallel(data, n_cpu: int = 4):
     """Apply ``expensive_row_op`` across a ``multiprocessing.Pool``.
 
@@ -48,7 +70,7 @@ def run_parallel(data, n_cpu: int = 4):
     n_workers = min(n_cpu, cpu_count())
     try:
         time_start = time()
-        with Pool(n_workers) as pool:
+        with fork_pool(n_workers) as pool:
             results = pool.map(expensive_row_op, data)
         elapsed = time() - time_start
         return results, elapsed
@@ -83,6 +105,33 @@ def run_benchmark(rows: int, cols: int = 10) -> dict:
         "Parallel": float(parallel_time),
         "Vectorized": float(vectorized_time),
     }
+
+
+def benchmark_reading(timings: dict, n_cpu: int = 4) -> str:
+    """The race result in plain words — what the three bars mean.
+
+    A learner sees numbers; this turns them into the two things worth saying:
+    cores help, but not ``cores``-fold (starting processes and moving data costs
+    time), and one library call beats both because the loop runs in compiled code.
+    """
+    workers = min(n_cpu, cpu_count())
+    parallel = timings["Serial"] / timings["Parallel"]
+    vectorized = timings["Serial"] / max(timings["Vectorized"], 1e-9)
+    if parallel > 1.1:
+        cores = (
+            f"**Parallel** used {workers} cores and was **{parallel:.1f}× faster** than the plain loop — "
+            f"not {workers}×, because starting the workers and handing them the data takes time too."
+        )
+    else:
+        cores = (
+            f"**Parallel** used {workers} cores and was **not faster** here: for this little data, "
+            "starting the workers costs more than they save. Try more rows."
+        )
+    return (
+        f"{cores}\n\n**Vectorized** was **{vectorized:,.0f}× faster** on a single core. Same result, "
+        "one library call instead of a loop — so before reaching for more cores, check whether "
+        "your library can already do the whole job at once."
+    )
 
 
 if __name__ == "__main__":

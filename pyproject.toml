@@ -17,6 +17,8 @@ dependencies = [
     "plotly>=6.9.0",
     "xgboost>=3.4.0",
     "scikit-survival>=0.28.0",
+    "statsmodels>=0.15.0",
+    "prophet>=1.5.0",
 ]
 
 [dependency-groups]

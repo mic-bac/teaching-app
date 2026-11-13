@@ -424,10 +424,23 @@ def test_user_based_recommendations_are_weighted_and_exclude_seen():
         index=[1, 2, 3],
     )
     user_sim = recommender_utils.user_similarity(user_item)
-    recs = recommender_utils.get_user_based_recommendations(1, user_item, user_sim)
+    recs = recommender_utils.get_user_based_recommendations(1, user_item, user_sim, min_neighbors=1)
     # User 1 has already rated M1 and M3, so only M2 can be recommended.
     assert "M2" in recs.index
     assert "M1" not in recs.index and "M3" not in recs.index
+    assert list(recs.columns) == ["score", "neighbors_who_rated"]
+
+
+def test_user_based_recommendations_need_enough_neighbours():
+    """A movie rated by a single neighbour is not evidence — it must not appear."""
+    user_item = pd.DataFrame(
+        {"Seen": [5.0, 5.0, 5.0, 4.0], "Popular": [np.nan, 4.0, 5.0, 4.0], "Obscure": [np.nan, 5.0, np.nan, np.nan]},
+        index=[1, 2, 3, 4],
+    )
+    user_sim = recommender_utils.user_similarity(user_item)
+    recs = recommender_utils.get_user_based_recommendations(1, user_item, user_sim, min_neighbors=2)
+    assert "Popular" in recs.index and "Obscure" not in recs.index
+    assert recs.loc["Popular", "neighbors_who_rated"] == 3
 
 
 def test_item_based_recommendations_on_demand():
@@ -496,6 +509,39 @@ def test_association_rules_and_basket_recommendation():
 
     recs = recommender_utils.get_basket_recommendations("milk", rules)
     assert "bread" in list(recs["recommendation"])
+    assert (recs["lift"] > 1).all()
+
+
+def test_basket_recommendations_ignore_bystander_and_negative_rules():
+    rules = pd.DataFrame({
+        "antecedents": [frozenset({"milk", "baby food"}), frozenset({"milk"}), frozenset({"milk"})],
+        "consequents": [frozenset({"baby cosmetics"}), frozenset({"soda"}), frozenset({"bread"})],
+        "support": [0.01, 0.1, 0.1], "confidence": [0.9, 0.2, 0.5], "lift": [30.0, 0.8, 1.4],
+    })
+    recs = recommender_utils.get_basket_recommendations("milk", rules)
+    # baby cosmetics: milk is a bystander. soda: lift < 1 is no association.
+    assert list(recs["recommendation"]) == ["bread"]
+
+    two_items = rules.assign(consequents=[frozenset({"x"}), frozenset({"y"}), frozenset({"bread", "rolls"})])
+    out = recommender_utils.get_basket_recommendations("milk", two_items)
+    assert isinstance(out, str)  # a bundled consequent is not a single-product suggestion
+
+
+def test_groceries_fall_back_to_synthetic_with_known_missions(tmp_path):
+    module = recommender_utils._groceries_module()
+    frame, source = module.load_groceries(tmp_path / "missing.csv")
+    assert source == "synthetic"
+    assert list(frame.columns) == ["Member_number", "Date", "itemDescription"]
+    rules = recommender_utils.make_rules(
+        recommender_utils.run_apriori(recommender_utils.build_transactions(frame), min_support=0.005), 0.1
+    )
+    # A planted mission pair is recovered as a strong rule; a pair of popular
+    # staples drawn independently comes out at lift ~ 1.
+    planted = rules[rules["rule_str"] == "baking powder → flour"]
+    assert not planted.empty and planted["lift"].iloc[0] > 5
+    staples = rules[rules["rule_str"] == "whole milk → rolls/buns"]
+    assert staples.empty or abs(staples["lift"].iloc[0] - 1) < 0.15
+    assert set(recommender_utils.planted_missions()["Mission"]) >= {"Baking", "Barbecue"}
 
 
 def test_basket_recommendation_unknown_item():
@@ -504,7 +550,7 @@ def test_basket_recommendation_unknown_item():
         recommender_utils.run_apriori(trans, min_support=0.1), min_confidence=0.5
     )
     out = recommender_utils.get_basket_recommendations("caviar", rules)
-    assert isinstance(out, str) and "No rules" in out
+    assert isinstance(out, str) and "No positive association" in out
 
 
 def test_taxonomy_dot_is_graphviz():
@@ -557,24 +603,41 @@ def test_prepare_features_drops_the_id_and_encodes_categoricals():
     assert len(y) == len(X)
 
 
-def test_split_and_scale_is_stratified_and_standardised():
+def test_stratified_split_keeps_the_churn_rate_and_does_not_scale():
     X, y, _ = propensity_utils.prepare_features(_tiny_churn())
-    split = propensity_utils.split_and_scale(X, y, test_size=0.25, random_state=42)
+    split = propensity_utils.stratified_split(X, y, test_size=0.25, random_state=42)
     assert len(split["X_train"]) == 300 and len(split["X_test"]) == 100
     assert split["y_train"].mean() == pytest.approx(split["y_test"].mean(), abs=0.05)
-    # Scaled training features are centred on 0 with unit spread.
-    np.testing.assert_allclose(split["X_train_scaled"].mean(axis=0), 0, atol=1e-9)
-    np.testing.assert_allclose(split["X_train_scaled"].std(axis=0), 1, atol=1e-9)
+    # Scaling belongs inside the model pipeline, never in the split.
+    assert not any("scaled" in key for key in split)
+
+
+def test_scale_sensitive_models_scale_inside_their_own_fit():
+    """No leakage: the scaler only ever sees the rows the model is fitted on."""
+    from sklearn.pipeline import Pipeline
+
+    X, y, _ = propensity_utils.prepare_features(_tiny_churn(400))
+    split = propensity_utils.stratified_split(X, y)
+    for name in ("Logistic Regression", "Neural Network"):
+        assert isinstance(propensity_utils.build_model(name), Pipeline)
+    assert not isinstance(propensity_utils.build_model("XGBoost"), Pipeline)
+
+    model = propensity_utils.build_model("Logistic Regression").fit(split["X_train"], split["y_train"])
+    np.testing.assert_allclose(model.named_steps["scale"].mean_, split["X_train"].mean().to_numpy())
+    # Overrides reach the classifier, not the pipeline.
+    tuned = propensity_utils.build_model("Logistic Regression", C=0.5)
+    assert tuned.named_steps["model"].C == 0.5
+    assert propensity_utils.pipeline_params(tuned, {"C": [1]}) == {"model__C": [1]}
 
 
 def test_fit_and_score_returns_every_metric_in_range():
     X, y, _ = propensity_utils.prepare_features(_tiny_churn(500))
-    split = propensity_utils.split_and_scale(X, y)
+    split = propensity_utils.stratified_split(X, y)
     result = propensity_utils.fit_and_score(
         propensity_utils.build_model("Logistic Regression"),
-        split["X_train_scaled"],
+        split["X_train"],
         split["y_train"],
-        split["X_test_scaled"],
+        split["X_test"],
         split["y_test"],
     )
     assert set(result["metrics"]) == {
@@ -598,12 +661,12 @@ def test_build_model_rejects_an_unknown_name():
 
 def test_threshold_sweep_trades_precision_against_recall():
     X, y, _ = propensity_utils.prepare_features(_tiny_churn(500))
-    split = propensity_utils.split_and_scale(X, y)
+    split = propensity_utils.stratified_split(X, y)
     result = propensity_utils.fit_and_score(
         propensity_utils.build_model("Logistic Regression"),
-        split["X_train_scaled"],
+        split["X_train"],
         split["y_train"],
-        split["X_test_scaled"],
+        split["X_test"],
         split["y_test"],
     )
     sweep = propensity_utils.threshold_sweep(split["y_test"], result["probabilities"], steps=9)
@@ -622,10 +685,10 @@ def test_confusion_frame_is_labelled_and_totals_the_test_set():
 
 def test_cross_validation_returns_one_score_per_fold():
     X, y, _ = propensity_utils.prepare_features(_tiny_churn(400))
-    split = propensity_utils.split_and_scale(X, y)
+    split = propensity_utils.stratified_split(X, y)
     scores = propensity_utils.cross_validate_model(
         propensity_utils.build_model("Logistic Regression"),
-        split["X_train_scaled"],
+        split["X_train"],
         split["y_train"],
         n_splits=3,
     )
@@ -635,9 +698,9 @@ def test_cross_validation_returns_one_score_per_fold():
 
 def test_tune_model_reports_what_the_search_cost():
     X, y, _ = propensity_utils.prepare_features(_tiny_churn(400))
-    split = propensity_utils.split_and_scale(X, y)
+    split = propensity_utils.stratified_split(X, y)
     tuned = propensity_utils.tune_model(
-        "Logistic Regression", split["X_train_scaled"], split["y_train"], cv=2
+        "Logistic Regression", split["X_train"], split["y_train"], cv=2
     )
     grid_size = len(propensity_utils.MODEL_SPECS["Logistic Regression"]["grid"]["C"])
     assert tuned["n_candidates"] == grid_size  # a grid search tries all of them
@@ -648,18 +711,18 @@ def test_tune_model_reports_what_the_search_cost():
 
 def test_learning_and_validation_curves_have_both_series():
     X, y, _ = propensity_utils.prepare_features(_tiny_churn(400))
-    split = propensity_utils.split_and_scale(X, y)
+    split = propensity_utils.stratified_split(X, y)
     model = propensity_utils.build_model("Logistic Regression")
 
     learning = propensity_utils.learning_curve_frame(
-        model, split["X_train_scaled"], split["y_train"], cv=2, n_points=3
+        model, split["X_train"], split["y_train"], cv=2, n_points=3
     )
     assert len(learning) == 3
     assert learning["train_size"].is_monotonic_increasing
     assert (learning["validation_mean"] > 0.5).all()
 
     validation = propensity_utils.validation_curve_frame(
-        model, split["X_train_scaled"], split["y_train"], "C", [0.01, 1.0], cv=2
+        model, split["X_train"], split["y_train"], "C", [0.01, 1.0], cv=2
     )
     assert list(validation["value"]) == [0.01, 1.0]
     assert {"train_mean", "validation_mean"} <= set(validation.columns)
@@ -667,10 +730,10 @@ def test_learning_and_validation_curves_have_both_series():
 
 def test_feature_importance_switches_on_what_the_model_exposes():
     X, y, _ = propensity_utils.prepare_features(_tiny_churn(400))
-    split = propensity_utils.split_and_scale(X, y)
+    split = propensity_utils.stratified_split(X, y)
 
     linear = propensity_utils.build_model("Logistic Regression").fit(
-        split["X_train_scaled"], split["y_train"]
+        split["X_train"], split["y_train"]
     )
     ranked = propensity_utils.feature_importance(linear, split["feature_names"], top_n=3)
     assert list(ranked.columns) == ["feature", "weight", "kind"]
@@ -684,7 +747,7 @@ def test_feature_importance_switches_on_what_the_model_exposes():
 
     # A neural net offers no built-in attribution: an empty frame, not a crash.
     net = propensity_utils.build_model("Neural Network", max_iter=5)
-    net.fit(split["X_train_scaled"], split["y_train"])
+    net.fit(split["X_train"], split["y_train"])
     assert propensity_utils.feature_importance(net, split["feature_names"]).empty
 
 
@@ -735,6 +798,20 @@ def test_prepare_survival_builds_the_structured_target():
     # Tenure is the time being modelled, so it must never become a feature.
     assert "Tenure" not in names and "CustomerID" not in names and "Churn" not in names
     assert all(str(dtype) == "float64" for dtype in X.dtypes)
+
+
+def test_split_survival_scales_on_training_customers_only():
+    frame = _tiny_churn(300)
+    X, y, _ = survival_utils.prepare_survival(frame)
+    X_train, X_test, _, _ = survival_utils.split_survival(X, y, random_state=42)
+    continuous = [c for c in X.columns if X[c].nunique() > 2]
+    # Standardised with the TRAINING mean/std: exactly 0/1 there, only roughly on test.
+    np.testing.assert_allclose(X_train[continuous].mean(), 0, atol=1e-9)
+    np.testing.assert_allclose(X_train[continuous].std(ddof=0), 1, atol=1e-9)
+    # Dummies stay 0/1, and the unsplit X is left untouched.
+    dummies = [c for c in X.columns if c not in continuous]
+    assert set(np.unique(X_train[dummies])) <= {0.0, 1.0}
+    assert not np.allclose(X[continuous].mean(), 0)
 
 
 def test_kaplan_meier_starts_high_and_never_rises():
@@ -983,12 +1060,331 @@ def test_value_tiers_and_action_table():
     assert tiers.value_counts().nunique() == 1  # quartiles are equal-sized
 
     cross_tab = pd.DataFrame(
-        {"Premium": [12, 0], "Low Value": [0, 30]}, index=["At Risk", "Lost"]
+        {"Premium": [12, 0], "Low Value": [0, 30]}, index=["Can't Lose Them", "Lost"]
     )
     cross_tab.index.name = "Segment"
     actions = segmentation_utils.segment_action_table(cross_tab)
-    assert set(actions["RFM segment"]) == {"At Risk", "Lost"}
+    assert set(actions["RFM segment"]) == {"Can't Lose Them", "Lost"}
     # Highest-count cell first, and the urgent group is described as urgent.
     assert actions.iloc[0]["Customers"] == 30
-    urgent = actions[actions["RFM segment"] == "At Risk"].iloc[0]["Recommended action"]
+    urgent = actions[actions["RFM segment"] == "Can't Lose Them"].iloc[0]["Recommended action"]
     assert "Urgent" in urgent
+
+
+def test_stability_verdict_needs_stability_and_separation():
+    if not segmentation_utils.SIBLING_AVAILABLE:
+        pytest.skip("segmentation sibling not checked out")
+    verdict = segmentation_utils.stability_verdict
+    assert verdict(0.95, 0.30) == "solid"
+    assert verdict(0.60, 0.30) == "shaky"
+    assert verdict(0.30, 0.30) == "unreliable"
+    # DBSCAN's case: perfectly repeatable, but the clusters do not separate.
+    assert verdict(0.99, 0.04) == "stable, but no real structure"
+    assert verdict(0.40, 0.04) == "no real structure"
+    assert verdict(0.99, float("nan")) == "stable, but no real structure"
+
+
+def test_learning_curve_diagnosis_compares_against_the_best_model():
+    kind, _ = propensity_utils.diagnose_learning_curve(0.99, 0.80, 0.85)
+    assert kind == "overfit"
+    kind, _ = propensity_utils.diagnose_learning_curve(0.66, 0.65, 0.90)
+    assert kind == "underfit"
+    # Converged, but well below what a flexible model reaches: high bias.
+    kind, message = propensity_utils.diagnose_learning_curve(0.889, 0.888, 0.941)
+    assert kind == "bias" and "high bias" in message
+    kind, _ = propensity_utils.diagnose_learning_curve(0.942, 0.938, 0.941)
+    assert kind == "healthy"
+
+
+def test_flat_validation_curve_is_recognised():
+    flat = pd.DataFrame({"value": [0.01, 1, 100], "validation_mean": [0.8881, 0.8885, 0.8879]})
+    peaked = pd.DataFrame({"value": [1, 5, 10], "validation_mean": [0.80, 0.90, 0.85]})
+    assert propensity_utils.validation_curve_is_flat(flat)
+    assert not propensity_utils.validation_curve_is_flat(peaked)
+
+
+
+# ---------------------------------------------------------------------------
+# forecasting_utils — imports the sibling predictions/src package
+# ---------------------------------------------------------------------------
+from utils import forecasting_utils  # noqa: E402
+
+
+def _needs_predictions():
+    if not forecasting_utils.SIBLING_AVAILABLE:
+        pytest.skip("predictions sibling not checked out")
+
+
+def test_slide_smoothing_table_reproduces_the_lecture_spreadsheet():
+    _needs_predictions()
+    table, metrics = forecasting_utils.slide_smoothing_table(alpha=0.4)
+    # Slides 70/78: pred column and MAE / MAPE / MSE / RMSE at alpha = 0.4.
+    assert table["pred"].round(2).tolist() == [3.0, 3.0, 3.8, 5.88, 11.53, 11.72, 13.83, 17.1, 19.46, 32.08, 35.65]
+    assert round(metrics["MAE"], 2) == 10.20
+    assert round(metrics["MSE"], 2) == 184.89
+    assert round(metrics["RMSE"], 2) == 13.60
+    assert round(metrics["MAPE"] / 100, 2) == 0.39  # the slide writes MAPE as a fraction
+    assert table["abs_error"].isna().iloc[0]  # the first row only starts the recursion
+
+
+def _toy_weekly(n=143, seed=0):
+    rng = np.random.default_rng(seed)
+    weeks = pd.date_range("2010-02-05", periods=n, freq="7D")
+    season = 10 * np.sin(2 * np.pi * np.arange(n) / 52)
+    return pd.Series(100 + season + rng.normal(0, 1, n), index=weeks)
+
+
+def test_cross_validation_folds_only_ever_move_forward():
+    _needs_predictions()
+    cv = forecasting_utils.cross_validate(_toy_weekly(), n_folds=3, horizon=13)
+    assert list(cv["fold"]) == [0, 1, 2]
+    assert cv["train_weeks"].is_monotonic_increasing
+    assert (pd.to_datetime(cv["test_from"]).diff().dropna() > pd.Timedelta(0)).all()
+    assert (cv[["seasonal naive MAPE", "Holt-Winters MAPE"]] > 0).all().all()
+
+
+def test_christmas_cannot_be_tested_by_a_seasonal_model():
+    _needs_predictions()
+    sales = _toy_weekly()
+    check = forecasting_utils.christmas_check(sales)
+    # Every Christmas lies before the first week a 52-week model can be tested on.
+    assert all(week < check["earliest_testable"] for week in check["christmas_weeks"])
+    assert check["earliest_testable"] == sales.index[104]
+    assert check["christmas_mape"] is not None
+
+
+def test_markdown_break_counts_weeks_before_tracking_started():
+    _needs_predictions()
+    weeks = pd.date_range("2011-01-07", periods=10, freq="7D")
+    panel = pd.DataFrame({"Date": weeks, "MarkDown1": [np.nan] * 6 + [1.0] * 4, "MarkDown2": np.nan})
+    result = forecasting_utils.markdown_break(panel, weeks)
+    assert result["first_recorded"] == weeks[6]
+    assert result["weeks_without"] == 6
+
+
+def test_two_sibling_src_packages_coexist_in_one_process():
+    """segmentation/src (sys.path) and predictions/src (package loader) must not shadow each other."""
+    _needs_predictions()
+    from utils import segmentation_utils
+
+    if not segmentation_utils.SIBLING_AVAILABLE:
+        pytest.skip("segmentation sibling not checked out")
+    assert "predictions" in forecasting_utils.tc.__file__
+    assert "segmentation" in segmentation_utils._rfm.__file__
+    assert forecasting_utils.fm.SEASONAL_PERIOD == 52  # relative import inside the package resolved
+
+
+
+def test_sarima_label_follows_the_sibling_defaults():
+    _needs_predictions()
+    assert forecasting_utils.sarima_label() == "SARIMA(1,0,1)(0,1,1,52)"
+
+
+
+# ---------------------------------------------------------------------------
+# Forecasting lesson (Prophet & XGBoost)
+# ---------------------------------------------------------------------------
+
+
+def _toy_panel(n_stores=3, n=143, seed=0):
+    rng = np.random.default_rng(seed)
+    weeks = pd.date_range("2010-02-05", periods=n, freq="7D")
+    rows = []
+    for store in range(1, n_stores + 1):
+        level = 1000 * store
+        season = 100 * np.sin(2 * np.pi * np.arange(n) / 52)
+        rows.append(pd.DataFrame({"Store": store, "Date": weeks, "Size": 100 * store, "Type": "A",
+                                  "Weekly_Sales": level + season + rng.normal(0, 10, n)}))
+    return pd.concat(rows, ignore_index=True)
+
+
+def test_feature_table_loses_the_first_year_to_lag_52():
+    _needs_predictions()
+    features = forecasting_utils.build_features(_toy_panel(), group="Store")
+    assert set(forecasting_utils.CALENDAR + forecasting_utils.LAGS) <= set(features.columns)
+    # lag_52 needs a full year of history, so 52 weeks per store are dropped.
+    assert len(features) == 3 * (143 - 52)
+    assert features["lag_52"].notna().all()
+
+
+def test_hybrid_trend_is_one_straight_line_per_store():
+    """The vectorised per-store trend must equal fitting each store on its own."""
+    _needs_predictions()
+    panel = forecasting_utils.build_features(_toy_panel(), group="Store")
+    train, test = forecasting_utils.split_panel(panel, test_weeks=13)
+    trends, prediction = forecasting_utils.fit_hybrid(train, test, ["t", "week"], group="Store")
+    assert set(trends) == {1, 2, 3} and len(prediction) == len(test)
+    # Store levels differ by 1000 per store; the forecast keeps them apart.
+    by_store = pd.Series(prediction, index=test["Store"].to_numpy()).groupby(level=0).mean()
+    assert by_store.is_monotonic_increasing
+
+
+def test_ets_per_store_reports_accuracy_and_cost():
+    _needs_predictions()
+    result = forecasting_utils.ets_per_store(_toy_panel())
+    assert result["models"] == 3
+    assert 0 < result["mape"] < 10 and result["seconds"] > 0
+
+
+def test_worker_pools_fork_instead_of_rerunning_the_page():
+    """Streamlit runs each page as __main__; spawn/forkserver workers re-execute
+    __main__ — i.e. the whole page — and the app hangs. Pools must fork."""
+    pool = compute_utils.fork_pool(1)
+    try:
+        assert pool._ctx.get_start_method() == "fork"
+        assert pool.map(compute_utils.expensive_row_op, [np.ones(3)]) == [1.0]
+    finally:
+        pool.terminate()
+
+
+# ---------------------------------------------------------------------------
+# detection_utils — reads exported YOLO results; tested on a tiny fake export
+# ---------------------------------------------------------------------------
+from utils import detection_utils  # noqa: E402
+
+
+@pytest.fixture
+def fake_results(tmp_path):
+    """A miniature ``object-detection/results/`` with two photos and two models."""
+    from PIL import Image
+
+    for key in ("everyday/a.jpg", "spaghetti/b.jpg"):
+        (tmp_path / "images" / key).parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (200, 100), "white").save(tmp_path / "images" / key)
+    box = lambda label, conf, xyxy: {"class_id": 0, "label": label, "confidence": conf, "box": xyxy}  # noqa: E731
+    export = {
+        "export_confidence": 0.05, "draw_confidence": 0.25,
+        "models": {
+            "pretrained": {"weights": "yolo11n.pt", "classes": 80, "images": {
+                "everyday/a.jpg": {"width": 200, "height": 100, "detections": [
+                    box("cup", 0.9, [10, 10, 50, 50]), box("cup", 0.3, [60, 10, 90, 50]),
+                    box("fork", 0.1, [100, 10, 120, 90])]},
+                "spaghetti/b.jpg": {"width": 200, "height": 100, "detections": [
+                    box("bowl", 0.6, [20, 20, 180, 90])]},
+            }},
+            "fine_tuned": {"weights": "best.pt", "classes": 1, "images": {
+                "spaghetti/b.jpg": {"width": 200, "height": 100, "detections": [
+                    box("spaghetti_bolo", 0.95, [20, 20, 180, 90])]},
+            }},
+        },
+        "training": {"epochs": 3, "best_epoch": 3, "train_images": 38, "val_images": 12, "training_minutes": 12.6,
+                     "best": {"precision": 0.9, "recall": 1.0, "mAP50": 0.99, "mAP50-95": 0.6}},
+    }
+    (tmp_path / "detections.json").write_text(__import__("json").dumps(export))
+    (tmp_path / "training").mkdir()
+    (tmp_path / "training" / "results.csv").write_text(
+        "epoch, metrics/mAP50(B), metrics/precision(B)\n1,0.2,0.1\n2,0.95,0.8\n3,0.99,0.9\n"
+    )
+    (tmp_path / "CREDITS.md").write_text(
+        "| File | Original | Author | License |\n|---|---|---|---|\n"
+        "| `everyday/a.jpg` | [A cup.jpg](https://commons.wikimedia.org/wiki/File:A_cup.jpg) | Jo | CC0 |\n"
+    )
+    return tmp_path
+
+
+def test_detection_results_load_and_flatten(fake_results):
+    results = detection_utils.load_results(fake_results)
+    frame = detection_utils.detections_frame(results, "pretrained")
+    assert len(frame) == 4 and set(frame["label"]) == {"cup", "fork", "bowl"}
+    assert detection_utils.images_for(results, "pretrained", "everyday") == ["everyday/a.jpg"]
+    assert detection_utils.load_results(fake_results / "missing") is None
+
+
+def test_confidence_threshold_keeps_only_sure_boxes(fake_results):
+    results = detection_utils.load_results(fake_results)
+    frame = detection_utils.detections_frame(results, "pretrained")
+    assert len(detection_utils.above(frame, 0.25)) == 3
+    table = detection_utils.threshold_table(frame, thresholds=(0.05, 0.5, 0.95))
+    assert table["boxes kept"].tolist() == [4, 2, 0]  # more strict -> never more boxes
+    summary = detection_utils.label_summary(detection_utils.above(frame, 0.25))
+    assert summary.iloc[0]["label"] == "cup" and summary.iloc[0]["count"] == 2
+
+
+def test_draw_boxes_returns_the_photo_with_boxes(fake_results):
+    results = detection_utils.load_results(fake_results)
+    frame = detection_utils.detections_frame(results, "pretrained").query("image == 'everyday/a.jpg'")
+    image = detection_utils.draw_boxes(fake_results / "images" / "everyday" / "a.jpg", frame)
+    assert image.size == (200, 100)
+    assert image.getpixel((10, 30)) != (255, 255, 255)  # the cup box outline was drawn
+    empty = detection_utils.draw_boxes(fake_results / "images" / "everyday" / "a.jpg", frame.iloc[0:0])
+    assert empty.getpixel((10, 30)) == (255, 255, 255)
+
+
+def test_yolo_label_is_normalised_centre_and_size():
+    assert detection_utils.to_yolo_label([50, 25, 150, 75], 200, 100) == "0 0.5000 0.5000 0.5000 0.5000"
+
+
+def test_iou_runs_from_no_overlap_to_identical():
+    assert detection_utils.iou([0, 0, 10, 10], [0, 0, 10, 10]) == 1.0
+    assert detection_utils.iou([0, 0, 10, 10], [20, 20, 30, 30]) == 0.0
+    assert detection_utils.iou([0, 0, 10, 10], [5, 0, 15, 10]) == pytest.approx(1 / 3)
+
+
+def test_training_metrics_and_first_epoch_reaching_a_level(fake_results):
+    metrics = detection_utils.training_metrics(fake_results)
+    assert {"mAP50", "precision"} <= set(metrics.columns)
+    assert detection_utils.epochs_to_reach(metrics, "mAP50", 0.9) == 2
+    assert detection_utils.epochs_to_reach(metrics, "mAP50", 1.0) is None
+
+
+def test_compare_models_puts_before_and_after_side_by_side(fake_results):
+    results = detection_utils.load_results(fake_results)
+    table = detection_utils.compare_models(results, "spaghetti", 0.25)
+    row = table.iloc[0]
+    assert row["pretrained sees"] == "bowl (60%)" and row["fine-tuned sees"] == "spaghetti_bolo (95%)"
+    assert detection_utils.compare_models(results, "spaghetti", 0.99).iloc[0]["pretrained sees"] == "—"
+
+
+def test_credits_are_parsed_into_attribution_lines(fake_results):
+    assert detection_utils.load_credits(fake_results)["author"].tolist() == ["Jo"]
+    line = detection_utils.credits_markdown(fake_results)
+    assert line == "- everyday/a.jpg: [A cup.jpg](https://commons.wikimedia.org/wiki/File:A_cup.jpg) — Jo, CC0"
+    # Titles and URLs with parentheses (common on Wikimedia) pass through untouched.
+    (fake_results / "CREDITS.md").write_text(
+        "| `x.jpg` | [Dinner (2023).jpg](https://c.org/File:Dinner_(2023).jpg) | Al | CC BY 2.0 |\n"
+    )
+    assert "[Dinner (2023).jpg](https://c.org/File:Dinner_(2023).jpg) — Al" in detection_utils.credits_markdown(fake_results)
+
+
+def test_notebook_cells_and_code_line_count(tmp_path):
+    notebook = {"cells": [
+        {"cell_type": "markdown", "source": ["# Title"]},
+        {"cell_type": "code", "source": ["# comment\n", "x = 1\n", "\n", "print(x)"]},
+    ]}
+    path = tmp_path / "nb.ipynb"
+    path.write_text(__import__("json").dumps(notebook))
+    cells = detection_utils.notebook_cells(path)
+    assert cells[0] == ("markdown", "# Title")
+    assert detection_utils.code_line_count(cells) == 2
+
+
+def test_workflow_diagram_uses_the_real_training_numbers():
+    dot = detection_utils.workflow_dot({"train_images": 38, "val_images": 12, "epochs": 50, "training_minutes": 12.6})
+    assert "50 photos" in dot and "50 rounds" in dot and "~13 min" in dot
+
+
+# ---------------------------------------------------------------------------
+# The plain-language readings under the two Parallelization races
+# ---------------------------------------------------------------------------
+def test_benchmark_reading_reports_both_speedups():
+    text = compute_utils.benchmark_reading({"Serial": 2.0, "Parallel": 0.5, "Vectorized": 0.001})
+    assert "4.0× faster" in text and "2,000× faster" in text
+
+
+def test_benchmark_reading_admits_when_parallel_does_not_pay_off():
+    text = compute_utils.benchmark_reading({"Serial": 0.1, "Parallel": 0.3, "Vectorized": 0.001})
+    assert "not faster" in text
+
+
+def test_io_reading_explains_multiprocessing_as_overlapped_waiting():
+    timings = {"Sequential": 10.0, "Threaded": 2.0, "Async": 0.5, "Multiprocessing": 1.0}
+    text = io_utils.io_reading(timings, count=80, processes=16)
+    assert "5.0× faster" in text and "20.0× faster" in text and "16 at a time" in text
+    assert "not because the cores compute" in text
+
+
+def test_read_rule_turns_the_three_numbers_into_a_sentence():
+    rule = pd.Series({"antecedent_str": "pasta", "consequent_str": "sauce",
+                      "support": 0.01, "confidence": 0.4, "lift": 2.5})
+    text = recommender_utils.read_rule(rule, n_baskets=1000)
+    assert "40%" in text and "2.5× more often" in text and "10 of 1,000 baskets" in text

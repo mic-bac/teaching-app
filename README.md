@@ -24,6 +24,27 @@ one interactive tool:
   survival curves, Cox / Random Survival Forest / Survival SVM, and the metrics censoring
   forces on us (c-index, time-dependent AUC, integrated Brier score), ending in individual
   survival curves and risk strata.
+- **🧩 Customer Segmentation** — **RFM** scoring (the R/F/M cube and a business-rule ladder),
+  **customer lifetime value** from a retention rate *measured* on cohorts (and how sharply the
+  value moves with that assumption), and **clustering** on demographics and behaviour,
+  evaluated without labels (silhouette, stability, a 2D projection).
+- **📈 Time Series** — *is this series forecastable at all?* A suitability report before any
+  model, decomposition and the trend that disappears once sales are deflated by CPI,
+  stationarity (ADF) and ACF/PACF, splitting by time and the four error measures (with the
+  lecture's own Excel smoothing example, reproduced by the real code), baselines,
+  Holt-Winters and SARIMA, rolling-origin cross-validation — and why Christmas cannot be
+  tested with 2.75 seasons of history.
+- **🔮 Forecasting** — *are Prophet and XGBoost worth it here?* Prophet's explainable parts
+  (trend, season, holidays) and the setting that makes forecasts overshoot; XGBoost losing on
+  one short series and winning as one model for 45 stores (forecasting at scale); early
+  stopping and overfitting; testing external data; the department level where MAPE breaks;
+  and detrending — a fix that helps or hurts depending on the diagnosis.
+- **🍝 Object Detection** — *how hard is it to teach a model something new?* A pretrained
+  YOLO model's boxes, labels and confidences (with a live threshold slider), the Label Studio
+  labelling workflow and the YOLO label format, a real fine-tuning run (50 photos, ~13 minutes
+  on a laptop CPU) read in plain words, before/after on look-alike dishes, the whole notebook —
+  and the AGPL licence question. **Results only:** the app reads what the sibling's
+  `export_results.py` stored and never installs torch or runs YOLO.
 
 ## Quickstart
 
@@ -58,6 +79,58 @@ falls back to a local SQLite database, so `make install && make run` works on it
 | `make lock` / `make export-reqs` | Refresh `uv.lock` / regenerate `requirements.txt` |
 | `make clean` | Remove the virtualenv and Python caches |
 
+## CI/CD (GitHub Actions)
+
+`.github/workflows/ci-cd.yml` runs on every push and pull request to `develop` and `main`:
+
+| Job | What it does | When |
+|---|---|---|
+| **Tests** | clones the siblings on the matching branch (`scripts/siblings.py`), `uv sync --frozen`, `pytest` | always |
+| **Build & start the deployment image** | builds the `Dockerfile`, starts the container, waits for `/_stcore/health` | after Tests pass |
+| **Deploy to Railway** | `railway up` with the Railway CLI | only on a push to `main` (a merged PR), after both jobs pass |
+
+A PR into `main` is tested against the siblings' `main` branches, so a forgotten sibling
+`develop → main` merge fails here, before anything is deployed. CI has no Kaggle data, the same
+as Railway, so it also proves that every page's synthetic fallback works.
+
+**One-time setup** for the deploy job:
+1. GitHub → *Settings → Environments* → create **`production`** (optionally require your
+   approval before each deploy).
+2. In that environment add the secret **`RAILWAY_TOKEN`** (a Railway *project token* for the
+   production environment) and the variable **`RAILWAY_SERVICE`** (the service name or ID).
+3. In Railway, turn **off** the service's own GitHub auto-deploy, otherwise every merge is
+   deployed twice — once untested.
+4. In Railway, set the service variable **`SIBLING_BRANCH=main`**: a CLI deploy has no
+   `$RAILWAY_GIT_BRANCH`, so this states the branch explicitly (it would fall back to `main` anyway).
+
+## Deployment (Railway)
+
+The repo ships a `Dockerfile` and `railway.json`; Railway builds the image (it injects
+`$PORT`; health check on `/_stcore/health`). Deploys come from the CI/CD workflow above.
+
+The sibling lesson repos are **not** part of this repo. The container clones them **when it
+starts**, on the branch matching the app's (`siblings.toml`):
+
+| App branch | Sibling branch |
+|---|---|
+| `develop` | `develop` |
+| `main` | `main` |
+| anything else | `main` |
+
+Siblings are maintained first, so a restart/redeploy simply runs their latest commit on that
+branch — a sibling-only change needs no app commit, just a redeploy. The branch comes from
+the `SIBLING_BRANCH` service variable, else Railway's `$RAILWAY_GIT_BRANCH` (set only for GitHub-triggered deploys), else `main`. Public
+datasets listed in `siblings.toml` are downloaded too (MovieLens from GroupLens); Kaggle-only
+datasets are not — those lessons fall back to synthetic data and say so on screen. PostgreSQL
+is not provisioned; the Database page uses its SQLite fallback.
+
+```bash
+make docker-build      # build exactly what Railway builds
+make docker-run        # run it at http://localhost:8501 (siblings on develop)
+make siblings-status   # which branch each local sibling is on vs. expected
+make siblings          # clone any missing sibling on the matching branch (fresh clone)
+```
+
 ## Project layout
 
 ```
@@ -67,6 +140,11 @@ pyproject.toml              # Dependencies (source of truth), Python >= 3.13
 uv.lock                     # Pinned, reproducible resolution
 .python-version             # Pins the interpreter to 3.13
 requirements.txt            # Exported from the lock (pip/deploy fallback)
+Dockerfile, railway.json    # Deployment image + Railway config
+.github/workflows/ci-cd.yml # CI/CD: tests -> image health check -> Railway deploy (main only)
+scripts/start.sh            # Container start: fetch siblings for this branch, then serve
+siblings.toml               # Sibling repos, branch rule (develop↔develop, main↔main), public data
+scripts/siblings.py         # fetch / data / status for the siblings (stdlib only)
 ENVIRONMENTS.md             # Workspace-wide uv environment strategy
 .streamlit/config.toml      # Theme
 pages/
@@ -75,6 +153,10 @@ pages/
   3_Recommender.py          # Recommender Systems lesson UI
   4_Propensity.py           # Propensity / look-alike modeling lesson UI
   5_Survival.py             # Survival analysis lesson UI
+  6_Segmentation.py         # Customer segmentation lesson UI (RFM, CLTV, clustering)
+  7_Time_Series.py          # Time series lesson UI (suitability, decomposition, classical models)
+  8_Forecasting.py          # Forecasting lesson UI (Prophet, XGBoost, grain, detrending)
+  9_Object_Detection.py     # Object detection lesson UI (YOLO results only: threshold, fine-tuning)
 utils/
   data_generator.py         # @st.cache_data random dataset generator
   db_utils.py               # SQLAlchemy connection + CRUD/introspection/run_query (Postgres → SQLite fallback)
@@ -84,6 +166,9 @@ utils/
   recommender_utils.py      # TF-IDF, collaborative filtering, matrix factorization, Apriori
   propensity_utils.py       # Churn classification, tuning, metrics, risk segments (+ synthetic fallback)
   survival_utils.py         # Kaplan-Meier, Cox / RSF / Survival SVM, censoring-aware metrics
+  segmentation_utils.py     # Thin adapter that imports segmentation/src/* (RFM, CLTV, clustering)
+  forecasting_utils.py      # Thin adapter that imports predictions/src/* (time series, forecasting)
+  detection_utils.py        # Reads object-detection/results/ (boxes, metrics, credits); no torch
 tests/                      # pytest + Streamlit AppTest suite
 data/                       # Local SQLite fallback DB lives here (gitignored)
 ```
@@ -121,9 +206,16 @@ which already reuses `MAX(id) + 1`.
 - The Parallelization page **generates data on the fly** at the slider-selected size; it does
   not load the large `parallelization/data/parallel_big_data.csv`.
 - The R script (`parallelization/parallel/parallel.R`) is **displayed only, never executed**.
+- The Object Detection page **never runs YOLO**: it reads `object-detection/results/`
+  (detections stored down to 5 % confidence, training metrics, openly licensed photos) and
+  redraws boxes with Pillow. That keeps torch out of the app env and the app outside the AGPL
+  licence of Ultralytics YOLO; the sibling repo that does run YOLO is AGPL-3.0.
 - The Propensity and Survival pages fit their models on a **slider-selected sample** of the
   ~505,000-customer churn dataset, so a live demo never waits minutes for a hyperparameter
   search. If the sibling repo's git-ignored Kaggle CSVs are missing, both pages fall back to a
   **synthetic** customer base with the same columns and say so on screen.
-- Adapted from the existing `parallelization/`, `postgresql/`, `recommender/` and
-  `predictions/` teaching repos — the app reads from them, it never copies them.
+- The Segmentation page **imports the sibling's own `segmentation/src/` modules** instead of
+  re-implementing them, so the code it shows is literally the code the lesson repo runs. If the
+  sibling's data files are missing, its loaders fall back to synthetic data and the page says so.
+- Adapted from the existing `parallelization/`, `postgresql/`, `recommender/`, `predictions/`
+  and `segmentation/` teaching repos — the app reads from them, it never copies them.

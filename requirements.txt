@@ -2,13 +2,13 @@
 #    uv export --no-hashes --no-dev --no-emit-project -o requirements.txt
 aiohappyeyeballs==2.7.1
     # via aiohttp
-aiohttp==3.14.1
+aiohttp==3.14.5
     # via teaching-app
 aiosignal==1.4.0
     # via aiohttp
-altair==6.2.2
+altair==6.3.0
     # via streamlit
-anyio==4.14.1
+anyio==4.16.0
     # via
     #   starlette
     #   streamlit
@@ -17,47 +17,45 @@ attrs==26.1.0
     #   aiohttp
     #   jsonschema
     #   referencing
-blinker==1.9.0
-    # via streamlit
-cachetools==7.1.4
-    # via streamlit
-certifi==2026.6.17
+certifi==2026.10.23
     # via requests
-charset-normalizer==3.4.7
+charset-normalizer==3.5.2
     # via requests
-click==8.4.2
+click==8.5.1
     # via
     #   streamlit
     #   uvicorn
+cloudpickle==3.1.2
+    # via joblib
+cmdstanpy==1.3.2
+    # via prophet
 colorama==0.4.6 ; sys_platform == 'win32'
-    # via click
-contourpy==1.3.3
+    # via tqdm
+contourpy==1.4.0
     # via matplotlib
 cycler==0.12.1
     # via matplotlib
 ecos==2.0.14
     # via scikit-survival
-fonttools==4.63.0
+fonttools==4.68.0
     # via matplotlib
+formulaic==1.2.2
+    # via statsmodels
 frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
-gitdb==4.0.12
-    # via gitpython
-gitpython==3.1.50
-    # via streamlit
-greenlet==3.5.3 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'
-    # via sqlalchemy
 h11==0.16.0
     # via uvicorn
-httptools==0.8.0
-    # via streamlit
-idna==3.18
+holidays==0.108
+    # via prophet
+idna==3.20
     # via
     #   anyio
     #   requests
     #   yarl
+interface-meta==2.0.1
+    # via formulaic
 itsdangerous==2.2.0
     # via streamlit
 jinja2==3.1.6
@@ -65,7 +63,7 @@ jinja2==3.1.6
     #   altair
     #   osqp
     #   pydeck
-joblib==1.5.3
+joblib==1.6.0
     # via
     #   mlxtend
     #   osqp
@@ -75,83 +73,103 @@ jsonschema==4.26.0
     # via altair
 jsonschema-specifications==2025.9.1
     # via jsonschema
-kiwisolver==1.5.0
+kiwisolver==1.5.1
     # via matplotlib
-markupsafe==3.0.3
+markupsafe==3.0.4
     # via jinja2
-matplotlib==3.11.1
-    # via mlxtend
+matplotlib==3.11.2
+    # via
+    #   mlxtend
+    #   prophet
 mlxtend==0.25.0
     # via teaching-app
-multidict==6.7.1
+multidict==7.2.1
     # via
     #   aiohttp
     #   yarl
-narwhals==2.23.0
+narwhals==2.28.0
     # via
     #   altair
+    #   formulaic
     #   plotly
     #   scikit-learn
     #   scikit-survival
 numexpr==2.14.2
     # via scikit-survival
-numpy==2.5.1
+numpy==2.5.4
     # via
+    #   cmdstanpy
     #   contourpy
     #   ecos
+    #   formulaic
     #   matplotlib
     #   mlxtend
     #   numexpr
     #   osqp
     #   pandas
+    #   patsy
+    #   prophet
     #   pydeck
     #   scikit-learn
     #   scikit-survival
     #   scipy
+    #   stanio
+    #   statsmodels
     #   streamlit
     #   teaching-app
     #   xgboost
-nvidia-nccl-cu13==2.30.7 ; sys_platform == 'linux'
+nvidia-nccl-cu13==2.32.6 ; sys_platform == 'linux'
     # via xgboost
 osqp==1.1.3
     # via scikit-survival
-packaging==26.2
+packaging==26.3
     # via
     #   altair
     #   matplotlib
+    #   patsy
     #   plotly
+    #   statsmodels
     #   streamlit
-pandas==3.0.3
+pandas==3.1.1
     # via
+    #   cmdstanpy
+    #   formulaic
     #   mlxtend
+    #   prophet
     #   scikit-survival
+    #   statsmodels
     #   streamlit
     #   teaching-app
-pillow==12.3.0
+patsy==1.0.3
+    # via statsmodels
+pillow==13.0.0
     # via
     #   matplotlib
     #   streamlit
-plotly==6.9.0
+plotly==7.1.0
     # via teaching-app
-propcache==0.5.2
+propcache==0.5.4
     # via
     #   aiohttp
     #   yarl
-protobuf==7.35.1
-    # via streamlit
-psycopg2-binary==2.9.12
+prophet==1.5.0
     # via teaching-app
-pyarrow==24.0.0
+protobuf==7.36.2
+    # via streamlit
+psycopg2-binary==2.9.13
+    # via teaching-app
+pyarrow==26.0.1
     # via streamlit
 pydeck==0.9.3
     # via streamlit
-pyparsing==3.3.2
+pyparsing==3.3.3
     # via matplotlib
 python-dateutil==2.9.0.post0
     # via
+    #   holidays
     #   matplotlib
     #   pandas
-python-multipart==0.0.32
+python-multipart==0.0.33
     # via streamlit
 referencing==0.37.0
     # via
@@ -161,59 +179,67 @@ requests==2.34.2
     # via
     #   streamlit
     #   teaching-app
-rpds-py==2026.6.3
+rpds-py==2026.9.1
     # via
     #   jsonschema
     #   referencing
-scikit-learn==1.9.0
+scikit-learn==1.9.1
     # via
     #   mlxtend
     #   scikit-survival
     #   teaching-app
 scikit-survival==0.28.0
     # via teaching-app
-scipy==1.18.0
+scipy==1.18.1
     # via
     #   ecos
+    #   formulaic
     #   mlxtend
     #   osqp
     #   scikit-learn
     #   scikit-survival
+    #   statsmodels
     #   xgboost
-setuptools==84.0.0
+setuptools==84.2.1
     # via osqp
 six==1.17.0
     # via python-dateutil
-smmap==5.0.3
-    # via gitdb
-sqlalchemy==2.0.51
+sqlalchemy==2.1.8
     # via teaching-app
-starlette==1.3.1
+stanio==0.5.1
+    # via cmdstanpy
+starlette==1.10.0
     # via streamlit
-streamlit==1.58.0
+statsmodels==0.15.0
     # via teaching-app
-tenacity==9.1.4
-    # via streamlit
-threadpoolctl==3.6.0
+streamlit==1.67.0
+    # via teaching-app
+threadpoolctl==3.8.0
     # via scikit-learn
-toml==0.10.2
-    # via streamlit
+tqdm==4.70.1
+    # via
+    #   cmdstanpy
+    #   prophet
 typing-extensions==4.16.0
     # via
     #   altair
+    #   anyio
+    #   formulaic
     #   sqlalchemy
     #   streamlit
-tzdata==2026.2 ; sys_platform == 'emscripten' or sys_platform == 'win32'
+tzdata==2026.6 ; sys_platform == 'emscripten' or sys_platform == 'win32'
     # via pandas
-urllib3==2.7.0
+urllib3==2.8.0
     # via requests
-uvicorn==0.50.1
+uvicorn==0.54.0
     # via streamlit
-watchdog==6.0.0 ; sys_platform != 'darwin'
+watchdog==7.1.0 ; sys_platform != 'darwin'
     # via streamlit
-websockets==16.0
+websockets==17.4
     # via streamlit
-xgboost==3.4.0
+wrapt==2.5.2
+    # via formulaic
+xgboost==3.4.1
     # via teaching-app
-yarl==1.24.2
+yarl==1.25.1
     # via aiohttp

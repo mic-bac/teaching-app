@@ -15,13 +15,47 @@ Automated tests for the Streamlit teaching app.
   draws its learning and validation curves, and the survival page reports
   Kaplan-Meier readouts, trains all three models, scores them over time, and
   states that the ranking-only SVM has no survival curve, and the segmentation
-  page reacts to its retention-rate slider without reloading the transaction log.
+  page reacts to its retention-rate slider without reloading the transaction log. The time-series page reproduces the lecture's Excel smoothing example and fits SARIMA on click.
+- **`test_sibling_alignment.py`** — a drift guard for the utils that *re-implement* a
+  sibling script (propensity, survival, recommender). Each hyperparameter is regex-read from
+  the sibling's source and compared with what the app runs. Entries are either `"same"` (the
+  app must match) or `"intentional"` (a recorded live-demo deviation); either way the
+  sibling's value is pinned, so a sibling edit fails here instead of drifting silently. It
+  also checks that the segmentation action table only names segments the sibling's RFM ladder
+  defines. Skips when a sibling repo is not checked out.
+- **`test_deployment.py`** — every sibling the app reads from is listed in `siblings.toml`
+  (https URL, git- and docker-ignored), and the branch rule resolves correctly: app
+  `develop` → sibling `develop`, `main` → `main`, environment variables first.
 - **`test_utils.py`** — unit tests for the shared utilities:
+  - New output-quality guards: user-based CF needs enough neighbours (no 5.0 ties from a
+    single rating), basket suggestions ignore bystander and lift ≤ 1 rules, the synthetic
+    Groceries baskets recover a planted mission while staples stay at lift ≈ 1, the clustering
+    verdict reads stability *and* separation, and the learning-curve reading compares against
+    the best model (high bias) and recognises a flat validation curve.
   - `segmentation_utils` — the CLTV multiplier against the lecture formula and
     its convexity in the retention rate, frequency counted as invoices rather
     than line items, the tenure floor that keeps a one-order customer's
     annualised contribution finite, and cohort frames that keep unobserved
     periods missing instead of silently reading them as zero retention.
+  - `forecasting_utils` — the slides' Excel smoothing example reproduced exactly (MAE 10.20,
+    MSE 184.89, RMSE 13.60 at α = 0.4), rolling-origin folds that only move forward, every
+    Christmas lying before the first week a 52-week model can be tested on, the promotion
+    break, the SARIMA label derived from the sibling, and `predictions/src` coexisting with
+    `segmentation/src` in one process.
+  - forecasting: the feature table drops the first year per store (`lag_52`), the vectorised
+    per-store trend in `fit_hybrid` keeps stores apart, and one-Holt-Winters-per-store reports
+    accuracy and cost. The Forecasting page smoke test presses all four experiment buttons.
+  - `detection_utils` — on a tiny fake `results/` export (no sibling, no torch): flattening
+    the stored boxes, the confidence threshold (stricter never keeps more boxes), boxes really
+    drawn on the photo, the YOLO label format, IoU from 0 to 1, the first epoch reaching a
+    mAP level, the before/after table, credit parsing and the notebook's code-line count. The
+    Object Detection smoke test moves the threshold slider (skipped if the sibling results are
+    absent).
+  - The plain-language readings shown under results: `benchmark_reading` / `io_reading` (both
+    Parallelization races, incl. multiprocessing explained as overlapped waiting) and
+    `read_rule` (the top association rule as a sentence).
+  - `test_sibling_alignment` also checks that `object-detection/results/` was exported with the
+    notebook's current EPOCHS / BATCH / IMG_SIZE (skipped if the sibling is absent).
   - `data_generator.generate_dataset` — shape, column names, value range.
   - `compute_utils` — serial/parallel/vectorized results agree, and
     `run_benchmark` returns the expected keys/types.

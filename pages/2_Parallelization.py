@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from utils import io_utils
-from utils.compute_utils import run_benchmark
+from utils.compute_utils import benchmark_reading, run_benchmark
 from utils.data_generator import generate_dataset
 from utils.teaching import source_of, split_script_blocks
 
@@ -28,6 +28,12 @@ cure:
 Each tab below races the approaches for one kind of workload.
 """
 )
+with st.container(border=True):
+    st.markdown(
+        "💼 **Where you'll use this** — a report that runs for an hour instead of minutes, a script that "
+        "downloads thousands of prices or files, a data job that blocks your laptop. Knowing *why* it is "
+        "slow tells you which fix works — and often the fix is just a few lines."
+    )
 
 cpu_tab, io_tab = st.tabs(
     ["🧮 CPU-bound — Parallelism", "🌐 I/O-bound — Concurrency"]
@@ -64,7 +70,7 @@ see how they compare.
         "**mean of each row** — a tiny operation repeated across all the rows, which "
         "is exactly the kind of workload that parallelization speeds up."
     )
-    st.dataframe(generate_dataset(5), use_container_width=True)
+    st.dataframe(generate_dataset(5), width="stretch")
     st.caption(
         "First 5 rows, generated on the fly. The real `parallel_big_data.csv` (184 MB, "
         "1 M rows) has the same shape — random floats in [0, 1) across 10 columns."
@@ -166,8 +172,10 @@ see how they compare.
 
         st.dataframe(
             chart_df.style.format({"Seconds": "{:.6f}"}),
-            use_container_width=True,
+            width="stretch",
         )
+        with st.container(border=True):
+            st.markdown("**What you just saw**\n\n" + benchmark_reading(timings))
     else:
         st.info("Choose a dataset size above and click **Start Benchmark Race**.")
 
@@ -332,7 +340,19 @@ that runs. Scroll to the bottom to race them.
 
         st.dataframe(
             chart_df.style.format({"Seconds": "{:.6f}"}),
-            use_container_width=True,
+            width="stretch",
         )
+        with st.container(border=True):
+            st.markdown("**What you just saw**\n\n" + io_utils.io_reading(timings, count))
     else:
         st.info("Set a URL and request count above, then click **Start Download Race**.")
+
+with st.container(border=True):
+    st.markdown(
+        """
+🎯 **What to remember**
+- **Computing a lot → use more cores** (parallelism) — or, better still, a vectorized library call.
+- **Waiting a lot → overlap the waiting** (threads, async) — what counts is how many waits overlap, not how many cores you have.
+- **Measure first:** the race shows that the "obvious" fix is often not the fastest one.
+"""
+    )

@@ -24,7 +24,8 @@ Nothing runs at import time; the demo is guarded under ``if __name__ ==
 import asyncio
 import concurrent.futures
 import threading
-from multiprocessing import Pool
+from multiprocessing import cpu_count
+from utils.compute_utils import fork_pool
 from time import time
 
 import aiohttp
@@ -149,7 +150,8 @@ def run_multiprocess(sites):
     """
     try:
         time_start = time()
-        with Pool(initializer=_set_mp_session) as pool:
+        # fork, explicitly — see compute_utils.fork_pool for why spawn/forkserver hang under Streamlit.
+        with fork_pool(initializer=_set_mp_session) as pool:
             results = pool.map(_download_on_process, sites)
         elapsed = time() - time_start
         return results, elapsed
@@ -174,6 +176,29 @@ def run_io_benchmark(url: str = DEFAULT_URL, count: int = 80) -> dict:
         "Async": float(async_time),
         "Multiprocessing": float(multiprocess_time),
     }
+
+
+def io_reading(timings: dict, count: int, threads: int = 5, processes: int | None = None) -> str:
+    """The download race in plain words — every speed-up is "waits that overlap".
+
+    Multiprocessing often beats the 5 threads here, which looks like "more cores
+    help after all". They don't: each process just waits on one download, so a
+    machine with 16 cores overlaps 16 waits — the same trick as threads, bought
+    with far heavier workers. Saying that out loud is the point of the race.
+    """
+    processes = processes or cpu_count()
+    speedup = {name: timings["Sequential"] / max(seconds, 1e-9) for name, seconds in timings.items()}
+    return (
+        f"All four did the same {count} downloads; only the **number of waits that overlap** differs.\n\n"
+        f"- **Sequential** — 1 at a time: the baseline.\n"
+        f"- **Threaded** — {threads} at a time: **{speedup['Threaded']:.1f}× faster**.\n"
+        f"- **Async** — all {count} at once, in a single thread: **{speedup['Async']:.1f}× faster**.\n"
+        f"- **Multiprocessing** — {processes} at a time (one per core of this machine): "
+        f"**{speedup['Multiprocessing']:.1f}× faster**.\n\n"
+        "Multiprocessing is fast here **not because the cores compute anything** — each process "
+        "just sits and waits, like a thread does. It is the expensive way to overlap waiting: "
+        f"{processes} full copies of the program instead of {processes} lightweight threads."
+    )
 
 
 if __name__ == "__main__":
