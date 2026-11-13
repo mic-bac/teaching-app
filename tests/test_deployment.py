@@ -54,6 +54,8 @@ def test_develop_tracks_develop_and_main_tracks_main():
 
 def test_branch_comes_from_the_environment_first(monkeypatch):
     module = script()
+    # Start clean: CI itself sets SIBLING_BRANCH for the whole job (see ci-cd.yml).
+    monkeypatch.delenv("SIBLING_BRANCH", raising=False)
     monkeypatch.setenv("RAILWAY_GIT_BRANCH", "develop")
     assert module.app_branch() == "develop"
     monkeypatch.setenv("SIBLING_BRANCH", "main")  # explicit override wins
