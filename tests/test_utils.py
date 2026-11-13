@@ -553,6 +553,71 @@ def test_basket_recommendation_unknown_item():
     assert isinstance(out, str) and "No positive association" in out
 
 
+def test_genre_helpers_show_the_overlap_behind_a_similarity():
+    movies = _tiny_movies()
+    assert recommender_utils.shared_genres("Comedy Romance", "Comedy") == "1 of 2"
+    assert recommender_utils.shared_genres("Action Adventure", "Action Adventure") == "2 of 2"
+    assert recommender_utils.genre_set("(no genres listed)") == set()
+    assert recommender_utils.all_genres(movies) == ["Action", "Adventure", "Comedy", "Romance"]
+    labels = recommender_utils.genre_highlight(movies, ["Comedy", "Romance"])
+    assert list(labels) == ["other", "other", "Comedy + Romance", "Comedy"]
+
+
+def _tiny_ratings_frame():
+    # Users 1-3 rate movies 1-4; user 3 skips movies 2 and 3 (the blanks).
+    return pd.DataFrame({
+        "userId": [1, 1, 1, 1, 2, 2, 2, 2, 3, 3],
+        "movieId": [1, 2, 3, 4, 1, 2, 3, 4, 1, 4],
+        "rating": [5.0, 4.0, 1.0, 2.0, 4.0, 5.0, 2.0, 1.0, 5.0, 2.0],
+    })
+
+
+def test_baseline_gives_everyone_the_same_order():
+    movies, ratings = _tiny_movies(), _tiny_ratings_frame()
+    _, _, i2i, i2it = recommender_utils.encode_ratings(ratings)
+    b_i = np.array([0.5, 0.3, -0.2, -0.4])  # A > B > C > D
+    others = pd.concat([ratings, pd.DataFrame({"userId": [9], "movieId": [1], "rating": [3.0]})])
+    first = recommender_utils.baseline_recommendations(3, b_i, others, movies, i2i, i2it)
+    second = recommender_utils.baseline_recommendations(9, b_i, others, movies, i2i, i2it)
+    assert first == ["B", "C"]          # only unseen movies, best movie bias first
+    assert second == ["B", "C", "D"]    # same order — the baseline is not personal
+
+
+def test_mf_explanation_adds_up_and_grid_fills_only_blanks():
+    movies, ratings = _tiny_movies(), _tiny_ratings_frame()
+    enc, u2i, i2i, _ = recommender_utils.encode_ratings(ratings)
+    model = recommender_utils.MatrixFactorization(len(u2i), len(i2i), n_factors=2, n_epochs=5).fit(enc)
+    parts = recommender_utils.explain_mf_prediction(model, 0, 1)
+    pieces = sum(v for k, v in parts.items() if k != "prediction")
+    assert parts["prediction"] == pytest.approx(pieces)
+    assert parts["prediction"] == pytest.approx(model.predict([0], [1], clip=False)[0])
+
+    grid = recommender_utils.rating_grid(ratings, movies, n_users=3, n_movies=4)
+    assert list(grid.index) == [3]  # the only user with blanks among the popular movies
+    assert grid.isna().sum().sum() == 2
+    filled = recommender_utils.complete_grid(grid, model, ratings, movies, u2i, i2i)
+    assert filled.notna().all().all()
+    known = grid.notna()
+    assert filled.where(known).equals(grid.where(known))  # known ratings are left alone
+
+
+def test_rule_arithmetic_and_readings_match_the_rule_numbers():
+    trans = recommender_utils.build_transactions(_tiny_groceries())
+    rules = recommender_utils.make_rules(recommender_utils.run_apriori(trans, 0.1), 0.5)
+    rule = rules[rules["rule_str"] == "milk → bread"].iloc[0]
+    text = recommender_utils.rule_arithmetic(rule, trans)
+    # 5 baskets, 4 with milk, 4 with bread, 4 with both.
+    assert "4 ÷ 5 = **0.8000**" in text and "4 ÷ 4 = **100.0%**" in text
+    assert f"**{rule['lift']:.2f}**" in text
+
+    reading = recommender_utils.support_reading(recommender_utils.item_support(trans))
+    assert "**80%** of baskets" in reading and "1 in" not in reading  # "1 in 1" would read oddly
+    assert "Biggest bubble" in recommender_utils.scatter_reading(rules)
+    edges = recommender_utils.rule_edges(rules)
+    assert ("milk", "bread", rule["lift"]) in edges
+    assert "is linked to" in recommender_utils.network_reading(edges)
+
+
 def test_taxonomy_dot_is_graphviz():
     dot = recommender_utils.taxonomy_dot()
     assert dot.startswith("digraph")
@@ -900,6 +965,37 @@ def test_individual_survival_curves_are_labelled_and_monotone():
         assert (group["survival"].diff().dropna() <= 1e-12).all()
 
 
+def test_survival_examples_speak_in_customers():
+    frame = _tiny_churn(400)
+    X, y, _ = survival_utils.prepare_survival(frame)
+    X_train, X_test, y_train, y_test = survival_utils.split_survival(X, y, random_state=42)
+    cox = survival_utils.fit_cox(X_train, y_train)
+
+    example = survival_utils.cindex_example(cox, X_test, y_test)
+    assert "Customer A left after" in example and ("✅" in example or "❌" in example)
+
+    raw = frame.loc[X_test.index]
+    curves = survival_utils.individual_survival_curves(cox, X_test, [0, 1], labels=["Customer 0 — x", "Customer 1 — y"])
+    snapshot = survival_utils.customer_snapshot(raw, y_test, [0, 1], ["Customer 0 — x", "Customer 1 — y"], curves)
+    # Unscaled features: a contract is a word, support calls are whole numbers.
+    assert snapshot["Contract Length"].iloc[0] in {"Monthly", "Quarterly", "Annual"}
+    assert snapshot["What happened"].iloc[0].startswith(("left after", "still a customer"))
+    assert snapshot["Predicted still here at 6m"].ge(snapshot["Predicted still here at 24m"]).all()
+    reading = survival_utils.curve_reading(snapshot)
+    assert reading.count("\n- ") == 1 and "Reality:" in reading and "**Customer 0**" in reading
+    # A ranking-only model gets the profile table without predictions.
+    plain = survival_utils.customer_snapshot(raw, y_test, [0], ["Customer 0"])
+    assert not any(c.startswith("Predicted") for c in plain.columns)
+
+
+def test_median_lifetime_is_the_first_month_at_or_below_half():
+    curves = pd.DataFrame({"time": [1, 2, 3, 1, 2, 3], "survival": [0.9, 0.5, 0.4, 0.9, 0.8, 0.7],
+                           "customer": ["a"] * 3 + ["b"] * 3})
+    median = survival_utils.median_lifetime(curves)
+    assert median["a"] == 2 and pd.isna(median["b"])
+    assert survival_utils.survival_at(curves, 2.5).to_dict() == {"a": 0.5, "b": 0.8}
+
+
 def test_risk_strata_split_the_test_set_and_separate_the_groups():
     frame = _tiny_churn(600)
     X, y, _ = survival_utils.prepare_survival(frame)
@@ -908,6 +1004,8 @@ def test_risk_strata_split_the_test_set_and_separate_the_groups():
     cox = survival_utils.fit_cox(X_train, y_train)
     curves, summary = survival_utils.risk_strata(cox, X_test, y_test)
     assert list(summary["Risk group"]) == ["Low", "Medium", "High", "Very high"]
+    reading = survival_utils.strata_reading(curves, summary)
+    assert "four equal groups" in reading and "*Very high*" in reading
     assert summary["Customers"].sum() == len(y_test)
     # A working model puts more churners in the high-risk groups than the low one.
     assert summary["Observed churn rate"].iloc[-1] > summary["Observed churn rate"].iloc[0]
@@ -970,13 +1068,92 @@ def test_dataset_roles_covers_the_three_methods():
     assert roles.loc[roles["Method"] == "RFM", "Needs"].iloc[0] == "Transaction log"
 
 
-def test_segmentation_architecture_dot_is_graphviz_and_reports_the_source():
-    dot = segmentation_utils.segmentation_architecture_dot("retail", "kaggle")
+def test_segmentation_architecture_dot_is_graphviz_and_shows_the_missing_link():
+    dot = segmentation_utils.segmentation_architecture_dot()
     assert dot.strip().startswith("digraph")
-    assert "Online Retail II" in dot and "Customer Personality" in dot
-    # A synthetic fallback must be visible in the diagram, not painted over.
-    fallback = segmentation_utils.segmentation_architecture_dot("synthetic", "synthetic")
-    assert "SYNTHETIC" in fallback
+    assert "Transaction log" in dot and "Customer attributes" in dot
+    # The loyalty card is the link a real retailer has and these datasets lack.
+    assert "Loyalty card" in dot and "style=dashed" in dot
+
+
+def test_dataset_roles_blames_the_data_not_transactions_in_general():
+    blind = segmentation_utils.dataset_roles()["Blind to (in this lesson's data)"]
+    assert all("this" in text for text in blind)
+
+
+def test_customer_orders_collapses_lines_into_orders():
+    orders = segmentation_utils.customer_orders(_tiny_transactions(), 1)
+    assert list(orders["Invoice"]) == ["A1", "A2"]
+    assert list(orders["Products"]) == [2, 1]
+    assert orders["Amount"].tolist() == pytest.approx([50.0, 50.0])
+
+
+def test_score_reading_and_example_customer():
+    scored = segmentation_utils.segment_rfm(_tiny_transactions())
+    example = segmentation_utils.example_customer(scored)
+    lines = segmentation_utils.score_reading(scored, example)
+    assert len(lines) == 3 and lines[0].startswith("**R =")
+    cloud = segmentation_utils.rfm_score_cloud(scored, jitter=0.3)
+    # Jitter never pushes a point into the neighbouring score.
+    assert (cloud["R"] - scored["R_Score"]).abs().max() <= 0.3
+    assert cloud.equals(segmentation_utils.rfm_score_cloud(scored, jitter=0.3))  # seeded
+
+
+def test_cohort_reading_quotes_the_first_cohort():
+    matrix = pd.DataFrame(
+        [[1.0, 0.25, 0.2, 0.3, 0.2], [1.0, 0.2, 0.1, np.nan, np.nan]],
+        index=pd.Index(["2010-01", "2010-02"], name="Cohort"),
+    )
+    text = segmentation_utils.cohort_reading(matrix)
+    assert "2010-01" in text and "25%" in text and "30% in month 3" in text
+
+
+def test_clv_year_by_year_sums_to_the_closed_form():
+    years = segmentation_utils.clv_year_by_year(300.0, 0.64, 0.10, years=400)
+    closed = 300.0 * segmentation_utils.clv_multiplier(0.64, 0.10)
+    assert years["Expected value today (€)"].sum() == pytest.approx(closed)
+    assert years["Chance still a customer"].iloc[0] == pytest.approx(0.64)
+
+
+def test_behavioural_retention_maps_recency_onto_the_band_rate():
+    bands = pd.DataFrame(
+        {"RetentionRate": [0.8, 0.5, 0.3]}, index=["0-29d", "30-89d", "90-364d"]
+    )
+    rr = segmentation_utils.behavioural_retention(pd.Series([5, 30, 89, 500]), bands)
+    # 500 days is past the last edge: the last band is stretched to cover it.
+    assert rr.tolist() == pytest.approx([0.8, 0.5, 0.5, 0.3])
+
+
+def test_cluster_sizes_reveal_balanced_and_extreme_algorithms():
+    labels = {
+        "Balanced": np.array([0] * 30 + [1] * 30 + [2] * 40),
+        "Extreme": np.array([0] * 90 + [1] * 5 + [-1] * 5),
+    }
+    sizes = segmentation_utils.cluster_size_frame(labels)
+    for name in labels:
+        assert sizes.loc[sizes["Algorithm"] == name, "Share"].sum() == pytest.approx(1.0)
+    assert "Noise" in set(sizes["Cluster"])
+    balanced, extreme = segmentation_utils.cluster_size_reading(sizes)
+    assert "similar size" in balanced
+    assert "90%" in extreme and "5% unassigned" in extreme
+
+
+def test_describe_cluster_reports_real_values_for_the_strongest_features():
+    profile = pd.Series({"Income": 80532.5, "Age": 44.0, "Total_Children": 0.2})
+    fingerprint = pd.Series({"Income": 1.33, "Age": -0.05, "Total_Children": -1.0})
+    text = segmentation_utils.describe_cluster(profile, fingerprint, top=3)
+    assert "income 80,532 (well above average)" in text
+    assert "children at home 0.2 (well below average)" in text
+    assert "age 44" not in text  # too close to average to mention
+    flat = segmentation_utils.describe_cluster(profile, fingerprint * 0)
+    assert "close to the average" in flat
+
+
+def test_campaign_value_break_even():
+    case = segmentation_utils.campaign_value(pd.Series([100.0, 300.0]), 10.0, 0.25)
+    assert case["cost"] == 20.0 and case["saved"] == pytest.approx(100.0)
+    assert case["net"] == pytest.approx(80.0)
+    assert case["break_even_rate"] == pytest.approx(0.05)
 
 
 def test_clv_multiplier_matches_the_lecture_formula():
@@ -1094,6 +1271,69 @@ def test_learning_curve_diagnosis_compares_against_the_best_model():
     assert kind == "bias" and "high bias" in message
     kind, _ = propensity_utils.diagnose_learning_curve(0.942, 0.938, 0.941)
     assert kind == "healthy"
+
+
+def test_learning_curve_diagnosis_says_what_to_do_per_model():
+    _, message = propensity_utils.diagnose_learning_curve(0.99, 0.80, 0.85, "XGBoost")
+    assert "max_depth" in message
+    _, message = propensity_utils.diagnose_learning_curve(0.99, 0.80, 0.85, "Logistic Regression")
+    assert "lower `C`" in message
+    _, message = propensity_utils.diagnose_learning_curve(0.66, 0.65, 0.90)
+    assert "Fix:" in message  # a generic remedy without a model name
+
+
+def test_validation_curve_reading_explains_why_the_best_is_best():
+    curve = pd.DataFrame({"value": [1, 3, 10], "train_mean": [0.80, 0.92, 0.99],
+                          "validation_mean": [0.80, 0.90, 0.85]})
+    text = propensity_utils.validation_curve_reading(curve, {"param": "max_depth", "simpler": "lower"})
+    assert "max_depth = 3" in text
+    assert "Simpler (max_depth = 1): validation only 0.800" in text
+    assert "More complex (max_depth = 10): training climbs to 0.990" in text
+    # For alpha, a HIGHER value is the simpler model, so the sides swap.
+    text = propensity_utils.validation_curve_reading(curve.assign(value=[1.0, 0.1, 0.01]),
+                                                     {"param": "alpha", "simpler": "higher"})
+    assert "Simpler (alpha = 0.01)" not in text and "More complex (alpha = 0.01)" in text
+    # Validation lower on the complex side WITHOUT a widening gap is not memorising.
+    even = curve.assign(train_mean=[0.81, 0.91, 0.86])
+    text = propensity_utils.validation_curve_reading(even, {"param": "max_depth", "simpler": "lower"})
+    assert "buys nothing" in text and "memorising" not in text
+
+
+def test_metric_guide_speaks_in_customers():
+    confusion = pd.DataFrame([[80, 20], [10, 90]],
+                             index=["Actually stayed", "Actually churned"],
+                             columns=["Predicted stay", "Predicted churn"])
+    metrics = {"Accuracy": 0.85, "Precision": 90 / 110, "Recall": 0.9, "F1-Score": 0.86,
+               "ROC-AUC": 0.93, "PR-AUC": 0.9}
+    guide = propensity_utils.metric_guide(metrics, confusion).set_index("Metric")
+    assert "170 of 200" in guide.loc["Accuracy", "Here"]
+    assert "90 of the 110 flagged" in guide.loc["Precision", "Here"]
+    assert "Caught 90 of 100 churners; 10 left" in guide.loc["Recall", "Here"]
+    assert "93%" in guide.loc["ROC-AUC", "Here"]
+
+
+def test_parameter_table_explains_every_tuning_knob():
+    for name in propensity_utils.MODEL_SPECS:
+        table = propensity_utils.parameter_table(name)
+        assert list(table["Parameter"]) == list(propensity_utils.MODEL_SPECS[name]["grid"])
+        assert table["What it does"].str.len().min() > 20
+    for sweep in propensity_utils.VALIDATION_SWEEPS.values():
+        assert sweep["param"] in propensity_utils.PARAMETER_GUIDE
+        assert sweep["simpler"] in ("lower", "higher")
+
+
+def test_score_and_threshold_readings_use_the_data():
+    y = np.array([0, 0, 0, 1, 1, 1])
+    probs = np.array([0.1, 0.2, 0.75, 0.5, 0.8, 0.9])
+    segments = propensity_utils.risk_segments(probs, y, low=0.4, high=0.7)
+    text = propensity_utils.score_histogram_reading(segments, 0.7)
+    assert "**3** customers score 0.70 or more" in text and "**67%**" in text
+    sweep = propensity_utils.threshold_sweep(y, probs)
+    text = propensity_utils.threshold_reading(sweep)
+    assert "At **0.30**" in text and "F1 peaks at" in text
+    # Scores piled up near 0 and 1: a higher cut-off only loses churners.
+    certain = propensity_utils.threshold_sweep(np.array([0, 0, 1, 1, 1]), np.array([0.01, 0.02, 0.5, 0.97, 0.99]))
+    assert "precision barely moves" in propensity_utils.threshold_reading(certain)
 
 
 def test_flat_validation_curve_is_recognised():

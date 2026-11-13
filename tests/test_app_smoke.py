@@ -144,7 +144,19 @@ def test_recommender_page_matrix_factorization_trains():
     assert train_buttons, "MF train button not found"
     train_buttons[0].click().run()
     assert not at.exception, f"MF training raised: {[str(e) for e in at.exception]}"
-    assert any("MF test RMSE" in m.label for m in at.metric)
+    assert any("Factorization test RMSE" in m.label for m in at.metric)
+    # The winning recommendation is taken apart into its four pieces.
+    assert any(m.label == "taste match pᵤ·qᵢ" for m in at.metric)
+
+
+def test_recommender_genre_map_highlights_whole_genres():
+    at = AppTest.from_file(str(ROOT / "pages/3_Recommender.py"), default_timeout=180)
+    at.run()
+    modes = [r for r in at.radio if r.label == "Highlight"]
+    assert modes, "genre-map highlight switch not found"
+    modes[0].set_value("Genres").run()
+    assert not at.exception
+    assert any(m.label == "Genres to highlight" for m in at.multiselect)
 
 
 def test_propensity_page_fits_a_model_at_the_smallest_sample():
@@ -158,9 +170,11 @@ def test_propensity_page_fits_a_model_at_the_smallest_sample():
     assert not at.exception
     # The Models tab fits on load, so the metric row must already be there.
     assert any(m.label == "ROC-AUC" for m in at.metric)
-    # The page states which data it is running on: the real CSVs or the fallback.
-    banners = list(at.success) + list(at.warning)
-    assert any("Kaggle churn dataset" in b.value or "synthetic" in b.value for b in banners)
+    # The data is described by what it is, not where it comes from.
+    assert any("customers" in c.value and "churned" in c.value for c in at.caption)
+    assert not any("Kaggle" in w.value for w in at.warning)
+    # Every metric is explained in customers, not just shown as a number.
+    assert any("Question it answers" in d.value.columns for d in at.dataframe)
 
 
 def test_propensity_page_cross_validation_and_tuning_run():
@@ -224,6 +238,11 @@ def test_survival_page_trains_models_and_scores_them_over_time():
     assert not at.exception, f"survival scoring raised: {[str(e) for e in at.exception]}"
     # The ranking-only model must explain itself rather than invent a Brier score.
     assert any("Survival SVM" in w.value for w in at.warning)
+    # The c-index comes with a real pair of test customers.
+    assert any("Customer A left after" in m.value for m in at.markdown)
+    # The curves tab names the customers behind the lines and the strata behind the fan.
+    assert any("customer by customer" in m.value for m in at.markdown)
+    assert any("four equal groups" in m.value for m in at.markdown)
 
 
 def test_survival_page_score_only_model_has_no_curves():
@@ -253,6 +272,16 @@ def test_segmentation_page_reacts_to_the_retention_slider():
     assert not at.exception, [str(e) for e in at.exception]
     # Customer equity is reported as a metric and must survive the change.
     assert any("equity" in m.label.lower() for m in at.metric)
+    # Worked examples: one customer's orders become R, F and M; the CLTV formula is
+    # computed for one customer; cluster sizes are compared; a campaign is costed.
+    texts = " ".join(m.value for m in at.markdown)
+    assert "orders" in texts and "**R =" in texts
+    assert "Worked example" in texts
+    assert "clusters —" in texts and "Profiles of the **K-Means** clusters" in texts
+    assert any(m.label == "Net effect" for m in at.metric)
+    assert any(r.label == "Axes" for r in at.radio)
+    at = at.radio[0].set_value("Raw values (log scale)").run()
+    assert not at.exception, [str(e) for e in at.exception]
 
 
 def test_time_series_page_reproduces_the_slide_and_fits_sarima():

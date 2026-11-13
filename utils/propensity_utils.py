@@ -270,21 +270,56 @@ VALIDATION_SWEEPS: dict[str, dict] = {
         "param": "C",
         "values": [0.0001, 0.001, 0.01, 0.1, 1, 10, 100],
         "log_scale": True,
+        "simpler": "lower",  # which direction of this knob makes the model simpler
         "reads": "Low C = strong regularisation (simpler model); high C = the model is free to fit noise.",
     },
     "XGBoost": {
         "param": "max_depth",
         "values": [1, 2, 3, 5, 7, 10],
         "log_scale": False,
+        "simpler": "lower",
         "reads": "Deeper trees can express more interactions — and can memorise the training set.",
     },
     "Neural Network": {
         "param": "alpha",
         "values": [0.0001, 0.001, 0.01, 0.1, 1.0],
         "log_scale": True,
+        "simpler": "higher",
         "reads": "alpha is the L2 penalty on the weights: larger = smoother, simpler network.",
     },
 }
+
+
+# Every tuning knob in plain words: what it does, and which way is "simpler".
+PARAMETER_GUIDE: dict[str, str] = {
+    "C": "How freely the model may follow the training data. Small C = strong brakes "
+         "(regularisation): a simpler, more cautious model. Large C = few brakes: it fits the "
+         "training data closely, noise included.",
+    "max_depth": "How many questions in a row one tree may ask (\"Support Calls > 5? → Contract "
+                 "monthly? → …\"). Deeper trees capture more combinations — and memorise more.",
+    "learning_rate": "How much each new tree may correct the trees before it. Small = careful, "
+                     "small steps (needs more trees); large = fast, but can overshoot.",
+    "n_estimators": "How many trees are built one after another, each fixing the previous "
+                    "ones' mistakes.",
+    "subsample": "Share of customers each tree gets to see (0.8 = a random 80 %). Less than 1 "
+                 "adds randomness, which makes memorising harder.",
+    "colsample_bytree": "Share of features each tree may use. Same idea as subsample, for columns.",
+    "hidden_layer_sizes": "The network's shape: (32, 16) = two layers of 32 and 16 neurons. "
+                          "More/larger layers = more flexible, more data needed.",
+    "alpha": "Brakes on the network's weights (L2 penalty). Larger alpha = smoother, simpler "
+             "network — the opposite direction to C.",
+    "learning_rate_init": "Step size while the network learns. Too large and it jumps around, "
+                          "too small and it learns very slowly.",
+}
+
+
+def parameter_table(name: str) -> pd.DataFrame:
+    """The tuning grid of one model, with every parameter explained."""
+    grid = MODEL_SPECS[name]["grid"]
+    return pd.DataFrame([
+        {"Parameter": param, "Values tried": ", ".join(map(str, values)), "What it does": PARAMETER_GUIDE[param]}
+        for param, values in grid.items()
+    ])
 
 
 def build_model(name: str, random_state: int = 42, **overrides):
@@ -411,6 +446,35 @@ def pr_frame(y_true, probabilities) -> pd.DataFrame:
     )
 
 
+def metric_guide(metrics: dict, confusion: pd.DataFrame) -> pd.DataFrame:
+    """Every metric with the question it answers — and its answer in customers.
+
+    The confusion matrix holds the counts behind the threshold metrics, so each
+    one can be said in plain words ("of the 400 we flagged, 350 really left").
+    """
+    tn, fp = int(confusion.iloc[0, 0]), int(confusion.iloc[0, 1])
+    fn, tp = int(confusion.iloc[1, 0]), int(confusion.iloc[1, 1])
+    total, flagged, churners = tn + fp + fn + tp, tp + fp, tp + fn
+    rows = [
+        ("Accuracy", "How often is the model right?",
+         f"Right about {tn + tp:,} of {total:,} customers."),
+        ("Precision", "Of the customers we flag, how many really churn?",
+         f"{tp:,} of the {flagged:,} flagged customers churned — the rest got an offer they didn't need."),
+        ("Recall", "Of the customers who churn, how many do we catch?",
+         f"Caught {tp:,} of {churners:,} churners; {fn:,} left without a warning."),
+        ("F1-Score", "One number for precision and recall together.",
+         "Their balance (harmonic mean): high only if *both* are high."),
+        ("ROC-AUC", "Does the model rank churners above stayers?",
+         f"Take one churner and one stayer at random: {metrics['ROC-AUC']:.0%} of the time the churner "
+         "gets the higher score. 50 % = coin flip."),
+        ("PR-AUC", "How precise is the model on average, across all thresholds?",
+         f"{metrics['PR-AUC']:.2f}, against {churners / total:.2f} for random guessing (the churn share)."),
+    ]
+    return pd.DataFrame(
+        [{"Metric": m, "Value": round(metrics[m], 3), "Question it answers": q, "Here": h} for m, q, h in rows]
+    )
+
+
 def threshold_sweep(y_true, probabilities, steps: int = 41) -> pd.DataFrame:
     """Precision/recall/F1 as a function of the decision threshold.
 
@@ -519,7 +583,24 @@ BIAS_MARGIN = 0.02     # validation this far below the best model = high bias
 FLAT_CURVE_SPREAD = 0.005  # a validation curve varying less than this is flat
 
 
-def diagnose_learning_curve(train_final: float, validation_final: float, best_model_score: float) -> tuple[str, str]:
+# What to actually DO per diagnosis, per model family.
+REMEDIES: dict[str, dict[str, str]] = {
+    "overfit": {
+        "Logistic Regression": "lower `C` (e.g. 1 → 0.1) for stronger regularisation",
+        "XGBoost": "shallower trees (`max_depth` 7 → 3), fewer trees, or `subsample` 0.8",
+        "Neural Network": "a larger `alpha` (0.0001 → 0.01) or smaller layers",
+    },
+    "underfit": {
+        "Logistic Regression": "a more flexible model (XGBoost), better features, or a higher `C`",
+        "XGBoost": "deeper trees, more trees, or better features",
+        "Neural Network": "larger layers, a smaller `alpha`, or better features",
+    },
+}
+
+
+def diagnose_learning_curve(
+    train_final: float, validation_final: float, best_model_score: float, model_name: str | None = None
+) -> tuple[str, str]:
     """Read a learning curve — against a yardstick, not in isolation.
 
     Returns ``(kind, message)`` with ``kind`` in ``overfit``/``underfit``/``bias``/``healthy``.
@@ -530,17 +611,32 @@ def diagnose_learning_curve(train_final: float, validation_final: float, best_mo
     not fix that; a more expressive model will.
     """
     gap = train_final - validation_final
+
+    def fix(kind: str, generic: str) -> str:
+        return REMEDIES[kind].get(model_name, generic) if model_name else generic
+
     if gap > 0.05:
-        return "overfit", "Training is well above validation — the model is memorising. Regularise or simplify it."
+        return "overfit", (
+            f"Training ({train_final:.3f}) is well above validation ({validation_final:.3f}) — the model "
+            "memorises the customers it has seen. **Fix:** simplify it — "
+            f"{fix('overfit', 'stronger regularisation or a simpler model')}. More data also helps here."
+        )
     if validation_final < 0.7:
-        return "underfit", "Both curves sit low — the model is too simple for this problem (underfitting)."
+        return "underfit", (
+            "Both curves sit low — the model is too simple for this problem (underfitting). More data "
+            f"will not help. **Fix:** {fix('underfit', 'a more flexible model or better features')}."
+        )
     if best_model_score - validation_final > BIAS_MARGIN:
         return "bias", (
             f"The curves converge — but at {validation_final:.3f}, below the {best_model_score:.3f} a more "
             "flexible model reaches on the same data. That is **high bias**: more data will not help "
-            "this model, a more expressive one does. Converged is not the same as good."
+            "this model. **Fix:** a more flexible model (e.g. XGBoost) or better features. Converged is not "
+            "the same as good."
         )
-    return "healthy", "The curves converge at the level the best model reaches: this model generalises on this data."
+    return "healthy", (
+        "The curves converge at the level the best model reaches: this model generalises on this data. "
+        "Nothing to fix — and once the validation curve is flat, more data will not buy much either."
+    )
 
 
 def validation_curve_is_flat(validation: pd.DataFrame, spread: float = FLAT_CURVE_SPREAD) -> bool:
@@ -551,6 +647,36 @@ def validation_curve_is_flat(validation: pd.DataFrame, spread: float = FLAT_CURV
     """
     means = validation["validation_mean"]
     return float(means.max() - means.min()) < spread
+
+
+def validation_curve_reading(validation: pd.DataFrame, sweep: dict) -> str:
+    """Why the best value is the best: what happens on its simpler and its more complex side."""
+    validation = validation.sort_values("value").reset_index(drop=True)  # ascending, so the sides are clear
+    param, means = sweep["param"], validation["validation_mean"]
+    values = list(validation["value"])
+    best = int(means.idxmax())
+    simpler_side = range(0, best) if sweep["simpler"] == "lower" else range(best + 1, len(values))
+    complex_side = range(best + 1, len(values)) if sweep["simpler"] == "lower" else range(0, best)
+    text = (f"Best validation score at **{param} = {values[best]}** ({means[best]:.3f}) — that is the "
+            "best *because* it scores highest on the customers the model did not train on.")
+    if len(simpler_side):
+        worst = min(simpler_side, key=lambda k: means[k])
+        text += (f" Simpler ({param} = {values[worst]}): validation only {means[worst]:.3f} — "
+                 "too simple to capture the pattern.")
+    else:
+        text += " It is already the simplest value tested — try even simpler ones."
+    if len(complex_side):
+        far = max(complex_side, key=lambda k: abs(k - best))
+        train = validation["train_mean"]
+        if train[far] - means[far] > train[best] - means[best] + 0.01:
+            text += (f" More complex ({param} = {values[far]}): training climbs to {train[far]:.3f} while "
+                     f"validation is {means[far]:.3f} — the extra freedom goes into memorising, not learning.")
+        else:
+            text += (f" More complex ({param} = {values[far]}): validation {means[far]:.3f} — the extra "
+                     "freedom buys nothing, and a simpler model is easier to trust.")
+    else:
+        text += " It is the most complex value tested — more complexity might still help."
+    return text
 
 
 def validation_curve_frame(
@@ -638,6 +764,45 @@ def risk_segments(
         labels=["Low risk", "Medium risk", "High risk"],
     )
     return frame
+
+
+def score_histogram_reading(segments: pd.DataFrame, high: float) -> str:
+    """The score histogram in plain words, with the High segment as the example."""
+    top = segments[segments["Propensity"] >= high]
+    overlap = segments[(segments["Propensity"] > 0.3) & (segments["Propensity"] < 0.7)]
+    return (
+        "**How to read it:** each bar counts customers with that score; the colour is what really "
+        "happened. A good model pushes the red bars (churned) to the right and the green bars "
+        "(stayed) to the left. Where the colours overlap, the model is unsure. "
+        f"Example: **{len(top):,}** customers score {high:.2f} or more, and "
+        f"**{top['Actual'].mean():.0%}** of them really churned. "
+        f"{len(overlap):,} customers sit in the unsure middle (0.3–0.7)."
+    )
+
+
+def threshold_reading(sweep: pd.DataFrame) -> str:
+    """The threshold chart in plain words: two example cut-offs and where F1 peaks."""
+    def at(t):
+        return sweep.iloc[(sweep["threshold"] - t).abs().argmin()]
+    low, high = at(0.3), at(0.7)
+    best = sweep.loc[sweep["F1-Score"].idxmax()]
+    lost = low["Recall"] - high["Recall"]
+    gained = high["Precision"] - low["Precision"]
+    if gained >= 0.01:
+        trade = f"precision rises by {gained:.0%} (fewer wasted offers), recall drops by {lost:.0%} (more churners missed)."
+    else:
+        trade = (f"recall drops by {lost:.0%} but precision barely moves — the scores here are mostly "
+                 "near 0 or 1, so a higher cut-off mainly loses churners.")
+    return (
+        "**How to read it:** the threshold is the score above which a customer counts as "
+        "\"will churn\" and gets an offer. Read the lines at one threshold:\n\n"
+        f"- At **0.30**: recall {low['Recall']:.0%} — we catch that share of churners; precision "
+        f"{low['Precision']:.0%} — that share of the offers reaches real churners.\n"
+        f"- At **0.70**: recall {high['Recall']:.0%}, precision {high['Precision']:.0%}. Moving up, {trade}\n"
+        f"- **F1 peaks at {best['threshold']:.2f}.** If a wasted offer and a lost customer cost "
+        "about the same, sit there. If losing a customer costs much more than an offer, move "
+        "**left**; if offers are expensive, move **right**."
+    )
 
 
 def segment_summary(segments: pd.DataFrame) -> pd.DataFrame:

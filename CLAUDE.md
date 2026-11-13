@@ -128,7 +128,7 @@ and the name `src` would otherwise collide with `segmentation/src`).
 
 ## Testing (required for every change)
 
-- Run with `make test` / `uv run pytest`. All tests must stay green (203 as of 2026-11-13).
+- Run with `make test` / `uv run pytest`. All tests must stay green (224 as of 2026-11-13).
 - **`tests/test_sibling_alignment.py`** — drift guard: sibling hyperparameters are regex-read and
   compared with the app. Parameter differences for live-demo runtime are fine but must be
   recorded there as `"intentional"`; logic differences are not.

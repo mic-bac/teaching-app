@@ -122,7 +122,7 @@ Siblings are maintained first, so a restart/redeploy simply runs their latest co
 branch — a sibling-only change needs no app commit, just a redeploy. The branch comes from
 the `SIBLING_BRANCH` service variable, else Railway's `$RAILWAY_GIT_BRANCH` (set only for GitHub-triggered deploys), else `main`. Public
 datasets listed in `siblings.toml` are downloaded too (MovieLens from GroupLens); Kaggle-only
-datasets are not — those lessons fall back to synthetic data and say so on screen. PostgreSQL
+datasets are not — those lessons fall back to synthetic data with the same columns. PostgreSQL
 is not provisioned; the Database page uses its SQLite fallback.
 
 ```bash
@@ -214,9 +214,9 @@ which already reuses `MAX(id) + 1`.
 - The Propensity and Survival pages fit their models on a **slider-selected sample** of the
   ~505,000-customer churn dataset, so a live demo never waits minutes for a hyperparameter
   search. If the sibling repo's git-ignored Kaggle CSVs are missing, both pages fall back to a
-  **synthetic** customer base with the same columns and say so on screen.
+  **synthetic** customer base with the same columns (the pages describe the data neutrally).
 - The Segmentation page **imports the sibling's own `segmentation/src/` modules** instead of
   re-implementing them, so the code it shows is literally the code the lesson repo runs. If the
-  sibling's data files are missing, its loaders fall back to synthetic data and the page says so.
+  sibling's data files are missing, its loaders fall back to synthetic data and the page still works.
 - Adapted from the existing `parallelization/`, `postgresql/`, `recommender/`, `predictions/`
   and `segmentation/` teaching repos — the app reads from them, it never copies them.

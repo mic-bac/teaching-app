@@ -94,6 +94,30 @@ def build_tfidf(movies_df: pd.DataFrame):
     return vectorizer, tfidf_matrix, title_to_idx
 
 
+def genre_set(genres: str) -> set[str]:
+    """The genres of one movie as a set (``load_movies`` joined them with spaces)."""
+    return set(genres.split()) - {"(no", "genres", "listed)"}
+
+
+def all_genres(movies_df: pd.DataFrame) -> list[str]:
+    """Every genre in the catalogue, alphabetically."""
+    return sorted(set().union(*movies_df["genres"].map(genre_set)))
+
+
+def shared_genres(liked: str, other: str) -> str:
+    """``"4 of 5"`` — how many of the liked movie's genres the other movie also has."""
+    mine = genre_set(liked)
+    return f"{len(mine & genre_set(other))} of {len(mine)}"
+
+
+def genre_highlight(movies_df: pd.DataFrame, genres: list[str]) -> pd.Series:
+    """Per movie, which of the chosen genres it has ("Comedy + Romance"), else "other"."""
+    def label(g):
+        have = [x for x in genres if x in genre_set(g)]
+        return " + ".join(have) if have else "other"
+    return movies_df["genres"].map(label)
+
+
 def get_recommendations(title, tfidf_matrix, movies_df, title_to_idx, top_n=10):
     """Recommend movies whose genres are most similar to ``title``.
 
@@ -360,6 +384,60 @@ def get_mf_recommendations(user_id, model, movies_df, ratings_df,
         ["title", "genres", "predicted_rating", "model_score"]].reset_index(drop=True)
 
 
+def baseline_recommendations(user_id, b_i, ratings_df, movies_df,
+                             item_to_idx, idx_to_item, num_recommendations=10):
+    """What the bias baseline would recommend: unseen movies by movie bias b_i.
+
+    mu and b_u are the same for every movie of one user, so they cannot change
+    the ORDER — every user gets the same list, minus what they have already seen.
+    """
+    rated = set(ratings_df.loc[ratings_df["userId"] == user_id, "movieId"])
+    order = np.argsort(b_i)[::-1]
+    top = [idx_to_item[k] for k in order if idx_to_item[k] not in rated][:num_recommendations]
+    titles = movies_df.set_index("movieId").loc[top, "title"]
+    return list(titles)
+
+
+def explain_mf_prediction(model, u: int, i: int) -> dict:
+    """One prediction taken apart: average + user bias + movie bias + taste match."""
+    parts = {
+        "average rating μ": model.mu,
+        "user bias bᵤ": model.b_u[u],
+        "movie bias bᵢ": model.b_i[i],
+        "taste match pᵤ·qᵢ": float(model.p[u] @ model.q[i]),
+    }
+    parts["prediction"] = sum(parts.values())
+    return parts
+
+
+def rating_grid(ratings_df, movies_df, n_users=6, n_movies=5) -> pd.DataFrame:
+    """A small corner of the rating matrix, with gaps — the problem in one picture.
+
+    The most-rated movies, and users who rated some but not all of them, so the
+    grid shows both known ratings and blanks for the model to fill.
+    """
+    popular = ratings_df["movieId"].value_counts().index[:n_movies]
+    sub = ratings_df[ratings_df["movieId"].isin(popular)]
+    counts = sub.groupby("userId").size()
+    users = counts[(counts >= 2) & (counts <= n_movies - 2)].index[:n_users]
+    grid = sub[sub["userId"].isin(users)].pivot(index="userId", columns="movieId", values="rating")
+    grid = grid.reindex(index=users, columns=popular)
+    grid.columns = movies_df.set_index("movieId").loc[popular, "title"]
+    return grid
+
+
+def complete_grid(grid, model, ratings_df, movies_df, user_to_idx, item_to_idx) -> pd.DataFrame:
+    """Fill the blanks of ``rating_grid`` with the model's predictions (known ratings stay)."""
+    title_to_id = movies_df.drop_duplicates("title").set_index("title")["movieId"]
+    filled = grid.copy()
+    for user in grid.index:
+        for title in grid.columns:
+            if pd.isna(grid.loc[user, title]):
+                u, i = user_to_idx[user], item_to_idx[title_to_id[title]]
+                filled.loc[user, title] = float(model.predict([u], [i])[0])
+    return filled
+
+
 # ===========================================================================
 # Association Rules (Apriori + support / confidence / lift)
 # ===========================================================================
@@ -416,6 +494,77 @@ def read_rule(rule: pd.Series, n_baskets: int) -> str:
         f"**{rule['lift']:.1f}× more often** than in an average basket (lift). But it happens in "
         f"only {together:,} of {n_baskets:,} baskets (support), so check that a rule is "
         "frequent enough to matter before you build a promotion on it."
+    )
+
+
+def rule_arithmetic(rule: pd.Series, transaction_df: pd.DataFrame) -> str:
+    """The three numbers of one rule, computed from basket counts in plain sight."""
+    n = len(transaction_df)
+    has_x = transaction_df[list(rule["antecedents"])].all(axis=1)
+    has_y = transaction_df[list(rule["consequents"])].all(axis=1)
+    x, y, both = int(has_x.sum()), int(has_y.sum()), int((has_x & has_y).sum())
+    X, Y = rule["antecedent_str"], rule["consequent_str"]
+    return (
+        f"Out of **{n:,}** baskets, **{x:,}** contain *{X}*, **{y:,}** contain *{Y}*, "
+        f"and **{both:,}** contain both.\n\n"
+        f"- **Support** = both ÷ all = {both:,} ÷ {n:,} = **{both / n:.4f}** — how common the pair is.\n"
+        f"- **Confidence** = both ÷ baskets with *{X}* = {both:,} ÷ {x:,} = **{both / x:.1%}** — "
+        f"how often a basket with *{X}* also has *{Y}*.\n"
+        f"- **Lift** = confidence ÷ how often *{Y}* is bought anyway = {both / x:.1%} ÷ {y / n:.1%} "
+        f"= **{(both / x) / (y / n):.2f}** — above 1 means *{Y}* turns up with *{X}* more often than "
+        "chance predicts."
+    )
+
+
+def support_reading(support: pd.Series) -> str:
+    """The popularity chart in one sentence, with its top item as the example."""
+    item, share = support.index[0], support.iloc[0]
+    one_in = f" — about 1 in {round(1 / share)}" if share < 0.5 else ""
+    return (
+        f"**How to read it:** *{item}* is in **{share:.0%}** of baskets{one_in}. Items this "
+        "common turn up next to everything, so popularity alone "
+        "says nothing about what belongs *together*. That is what the rules below measure."
+    )
+
+
+def scatter_reading(rules: pd.DataFrame) -> str:
+    """The support/confidence bubble chart in plain words, with real examples."""
+    strong = rules.nlargest(1, "lift").iloc[0]
+    sure = rules.nlargest(1, "confidence").iloc[0]
+    text = (
+        "**How to read it:** every bubble is one rule. *Right* = the pair is common, "
+        "*up* = the rule is reliable, *big and yellow* = strong lift. The best rules for a "
+        "promotion sit up and to the right, and are big.\n\n"
+        f"- Biggest bubble: *{strong['rule_str']}* — lift **{strong['lift']:.1f}**, "
+        f"in {strong['support']:.2%} of baskets."
+    )
+    if sure["rule_str"] != strong["rule_str"]:
+        text += (f"\n- Highest bubble: *{sure['rule_str']}* — {sure['confidence']:.0%} confidence, "
+                 f"lift {sure['lift']:.1f}. Reliable, but check its lift: high confidence can come "
+                 "from the right-hand item simply being popular.")
+    return text
+
+
+def rule_edges(rules: pd.DataFrame, top_n: int = 10) -> list[tuple[str, str, float]]:
+    """``(from item, to item, lift)`` for the strongest rules — the network's lines."""
+    top = rules.nlargest(top_n, "lift")
+    return [(a, c, row["lift"]) for _, row in top.iterrows()
+            for a in row["antecedents"] for c in row["consequents"]]
+
+
+def network_reading(edges: list[tuple[str, str, float]]) -> str:
+    """The rule network in one sentence: its best-connected item as the example."""
+    links: dict[str, set[str]] = {}
+    for a, c, _ in edges:
+        links.setdefault(a, set()).add(c)
+        links.setdefault(c, set()).add(a)
+    hub = max(links, key=lambda k: len(links[k]))
+    partners = ", ".join(f"*{p}*" for p in sorted(links[hub]))
+    return (
+        "**How to read it:** each dot is a product; a line means one of the strongest rules "
+        f"connects them. Example: *{hub}* is linked to {partners}. A cluster like this can hint "
+        "at a *shopping mission* (candidates for one shelf or bundle) — check each rule's lift "
+        "and support in the table before acting on it."
     )
 
 

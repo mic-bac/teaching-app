@@ -118,14 +118,11 @@ with control:
         help="Survival models scale worse than classifiers, so this lesson samples smaller than the propensity one.",
     )
 with status:
-    churn_df, data_source = cached_churn(sample_size)
-    if data_source == "kaggle":
-        st.success(f"Kaggle churn dataset — {len(churn_df):,} customers sampled from the sibling `predictions/` repo.")
-    else:
-        st.warning(
-            "The Kaggle CSVs were not found in `predictions/data/churn/`, so this lesson is running on a "
-            "**synthetic** customer base with the same columns. Everything still works; the numbers are simulated."
-        )
+    churn_df, _ = cached_churn(sample_size)
+    st.caption(
+        f"A subscription business with **{len(churn_df):,} customers** — how long each has been with us "
+        f"(Tenure) and whether they have left yet ({churn_df['Churn'].mean():.0%} have)."
+    )
 
 split = cached_split(sample_size)
 
@@ -321,7 +318,7 @@ with tab_km:
 # ===========================================================================
 with tab_models:
     st.subheader("Three ways to model time-to-event")
-    st.table(pd.DataFrame(S.MODEL_TABLE))
+    st.table(pd.DataFrame(S.MODEL_TABLE)[["Model", "In plain words", "Strength", "Limitation", "Gives S(t)?"]])
 
     st.markdown(
         """
@@ -369,11 +366,19 @@ with tab_models:
         st.plotly_chart(fig_c, width="stretch")
 
         st.dataframe(frame.round(4), width="stretch", hide_index=True)
-        best = frame.loc[frame["Test c-index"].idxmax(), "Model"]
-        st.success(f"Best ranking on held-out customers: **{best}**")
+        best = frame.loc[frame["Test c-index"].idxmax()]
+        st.success(f"Best ranking on held-out customers: **{best['Model']}**")
+        st.markdown(f"**What that means, with two real test customers** ({best['Model']}):")
+        st.markdown(S.cindex_example(cached_model(best["Model"], sample_size), split["X_test"], split["y_test"]))
         st.caption(
-            "A large train-test gap means the model memorised the training customers. "
-            "Tree ensembles show the biggest gap here — that is what their flexibility costs."
+            f"A test c-index of **{best['Test c-index']:.2f}** means: across all such pairs of test "
+            f"customers, about {best['Test c-index'] * 100:.0f} of every 100 are ordered right."
+        )
+        gappy = frame.loc[frame["Gap (overfit)"].idxmax()]
+        st.caption(
+            f"**The gap column:** {gappy['Model']} orders {gappy['Train c-index']:.0%} of the pairs right on "
+            f"the customers it learned from, but {gappy['Test c-index']:.0%} on new ones. The difference is "
+            "what it memorised — only the test number tells you how it will do on next month's customers."
         )
     else:
         st.info("Click **🏋️ Train all three models** — Cox, a survival forest and a ranking SVM, on the current sample.")
@@ -444,8 +449,23 @@ with tab_eval:
         fig_auc.add_hline(y=0.5, line_dash="dot", line_color="gray", annotation_text="chance")
         fig_auc.update_layout(height=450)
         st.plotly_chart(fig_auc, width="stretch")
+        example = auc_all.iloc[(auc_all["time"] - 12).abs().argsort()[:1]].iloc[0]
+        st.caption(
+            f"**How to read it:** each point asks one question at one month. Example: at month "
+            f"**{example['time']:.0f}**, take one customer who had left by then and one who was still here. "
+            f"{example['Model'].split(' (')[0]} gives the leaver the higher risk **{example['auc']:.0%}** of "
+            "the time. A line that sags at some months tells you *when* the model is less useful for timing "
+            "a campaign."
+        )
 
-        st.markdown("**Integrated Brier score** — how far the predicted probabilities are off. Lower is better; about 0.25 is no better than guessing.")
+        st.markdown(
+            "**Integrated Brier score** — how far the predicted probabilities are off. For one customer at "
+            "one month it is (prediction − reality)², where reality is 1 if they are still here, 0 if not. "
+            "Example: the model says *90 % still here at month 12*. Customer still here → (0.9 − 1)² = "
+            "**0.01**, nearly perfect. Customer gone → (0.9 − 0)² = **0.81**, badly wrong. Averaged over "
+            "all customers and months: lower is better, and saying *50 %* for everyone always scores "
+            "**0.25** — the guessing line."
+        )
         numeric = [row for row in brier_rows if not isinstance(row["Integrated Brier score"], str)]
         if numeric:
             fig_brier = px.bar(
@@ -494,6 +514,18 @@ with tab_individual:
         for i in indices
     ]
     curves = S.individual_survival_curves(model, split["X_test"], indices, labels)
+    raw_test = churn_df.loc[split["X_test"].index]  # the unscaled rows, so we talk in contracts, not z-scores
+
+    st.markdown(
+        """
+        **Who are customers 0, 1, 2…?** The first customers of the *test set* — people the model never
+        saw while learning. Each line is the model's forecast for one of them: it starts at 100 % (at
+        signup everyone is a customer) and falls as the risk of leaving adds up. **Steep early drop = likely
+        to leave soon; a flat line = a loyal customer.** The legend shows what really happened: *churned at
+        9m* means they left after 9 months; *still active at 30m* means they were still here when the data
+        ends — we only know they stayed at least that long (censored).
+        """
+    )
 
     if isinstance(curves, str):
         st.warning(curves)
@@ -501,6 +533,8 @@ with tab_individual:
             "This is the slide's point made concrete: a ranking model orders customers but has no S(t) "
             "to draw. Pick Cox or the forest to see curves."
         )
+        st.dataframe(S.customer_snapshot(raw_test, split["y_test"], indices, labels),
+                     width="stretch", hide_index=True)
     else:
         fig_ind = px.line(
             curves,
@@ -513,9 +547,17 @@ with tab_individual:
         )
         fig_ind.update_layout(height=470, yaxis_range=[0, 1])
         st.plotly_chart(fig_ind, width="stretch")
+        snapshot = S.customer_snapshot(raw_test, split["y_test"], indices, labels, curves)
+        st.dataframe(
+            snapshot.style.format({c: "{:.0%}" for c in snapshot.columns if c.startswith("Predicted still")}
+                                  | {"Predicted median lifetime (months)": "{:.0f}", "Total Spend": "{:,.0f}"},
+                                  na_rep="—"),
+            width="stretch", hide_index=True,
+        )
+        st.markdown("**Reading the curves, customer by customer:**\n\n" + S.curve_reading(snapshot))
         st.caption(
-            "Where a curve crosses 50% is that customer's predicted median lifetime — a far more "
-            "actionable number than a churn flag."
+            "Where a curve crosses 50 % is that customer's predicted median lifetime — a far more "
+            "actionable number than a churn flag: it tells retention *when* to call."
         )
 
     if curve_model_name == "Cox Proportional Hazards":
@@ -568,6 +610,7 @@ with tab_individual:
         width="stretch",
         hide_index=True,
     )
+    st.markdown(S.strata_reading(strata_curves, strata_summary))
 
     st.markdown(
         """
