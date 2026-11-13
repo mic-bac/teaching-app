@@ -107,5 +107,32 @@ def run_benchmark(rows: int, cols: int = 10) -> dict:
     }
 
 
+def benchmark_reading(timings: dict, n_cpu: int = 4) -> str:
+    """The race result in plain words — what the three bars mean.
+
+    A learner sees numbers; this turns them into the two things worth saying:
+    cores help, but not ``cores``-fold (starting processes and moving data costs
+    time), and one library call beats both because the loop runs in compiled code.
+    """
+    workers = min(n_cpu, cpu_count())
+    parallel = timings["Serial"] / timings["Parallel"]
+    vectorized = timings["Serial"] / max(timings["Vectorized"], 1e-9)
+    if parallel > 1.1:
+        cores = (
+            f"**Parallel** used {workers} cores and was **{parallel:.1f}× faster** than the plain loop — "
+            f"not {workers}×, because starting the workers and handing them the data takes time too."
+        )
+    else:
+        cores = (
+            f"**Parallel** used {workers} cores and was **not faster** here: for this little data, "
+            "starting the workers costs more than they save. Try more rows."
+        )
+    return (
+        f"{cores}\n\n**Vectorized** was **{vectorized:,.0f}× faster** on a single core. Same result, "
+        "one library call instead of a loop — so before reaching for more cores, check whether "
+        "your library can already do the whole job at once."
+    )
+
+
 if __name__ == "__main__":
     print(run_benchmark(2000))

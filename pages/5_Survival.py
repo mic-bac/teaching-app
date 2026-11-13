@@ -272,13 +272,13 @@ with tab_km:
     )
     fig_km.add_trace(
         go.Scatter(
-            x=km["time"], y=km["survival"], mode="lines", line=dict(color="#1565c0", width=3, shape="hv"), name="S(t)"
+            x=km["time"], y=km["survival"], mode="lines", line=dict(color="#1565c0", width=3, shape="hv"), name="still customers"
         )
     )
     fig_km.update_layout(
         title="<b>Share of customers still with us after t months</b>",
         xaxis_title="Months since signup",
-        yaxis_title="S(t)",
+        yaxis_title="Share still customers",
         yaxis_range=[0, 1],
         height=470,
     )
@@ -288,7 +288,7 @@ with tab_km:
     for column, month in zip(readouts, (6, 12, 24, 36)):
         if month <= km["time"].max():
             value = km.loc[km["time"] <= month, "survival"].iloc[-1]
-            column.metric(f"S({month} months)", f"{value * 100:.1f}%")
+            column.metric(f"Still customers after {month} months", f"{value * 100:.1f}%")
 
     st.divider()
     st.subheader("Comparing segments")
@@ -308,7 +308,7 @@ with tab_km:
         color=group_col,
         line_shape="hv",
         title=f"<b>Survival by {group_col.lower()}</b>",
-        labels={"time": "Months since signup", "survival": "S(t)"},
+        labels={"time": "Months since signup", "survival": "Share still customers"},
     )
     fig_group.update_layout(height=470, yaxis_range=[0, 1])
     st.plotly_chart(fig_group, width="stretch")
@@ -438,14 +438,14 @@ with tab_eval:
             y="auc",
             color="Model",
             markers=True,
-            title="<b>Time-dependent AUC — discrimination is not constant over time</b>",
-            labels={"time": "Months since signup", "auc": "AUC(t)"},
+            title="<b>How well each model tells leavers from stayers, month by month (AUC)</b>",
+            labels={"time": "Months since signup", "auc": "AUC at that month (0.5 = guessing, 1 = perfect)"},
         )
         fig_auc.add_hline(y=0.5, line_dash="dot", line_color="gray", annotation_text="chance")
         fig_auc.update_layout(height=450)
         st.plotly_chart(fig_auc, width="stretch")
 
-        st.markdown("**Integrated Brier score** — lower is better; ~0.25 is uninformative.")
+        st.markdown("**Integrated Brier score** — how far the predicted probabilities are off. Lower is better; about 0.25 is no better than guessing.")
         numeric = [row for row in brier_rows if not isinstance(row["Integrated Brier score"], str)]
         if numeric:
             fig_brier = px.bar(
@@ -509,7 +509,7 @@ with tab_individual:
             color="customer",
             line_shape="hv",
             title=f"<b>Predicted survival curves — {curve_model_name}</b>",
-            labels={"time": "Months since signup", "survival": "S(t)"},
+            labels={"time": "Months since signup", "survival": "Share still customers"},
         )
         fig_ind.update_layout(height=470, yaxis_range=[0, 1])
         st.plotly_chart(fig_ind, width="stretch")
@@ -558,7 +558,7 @@ with tab_individual:
         category_orders={"risk_group": ["Low", "Medium", "High", "Very high"]},
         color_discrete_sequence=["#2e7d32", "#9ccc65", "#fb8c00", "#c62828"],
         title=f"<b>Observed survival by predicted risk quartile ({curve_model_name})</b>",
-        labels={"time": "Months since signup", "survival": "S(t)"},
+        labels={"time": "Months since signup", "survival": "Share still customers"},
     )
     fig_strata.update_layout(height=470, yaxis_range=[0, 1])
     st.plotly_chart(fig_strata, width="stretch")

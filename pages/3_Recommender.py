@@ -620,6 +620,7 @@ threshold, then turns them into rules.
             width="stretch",
             hide_index=True,
         )
+        st.info(R.read_rule(rules.nlargest(1, "lift").iloc[0], transactions.shape[0]))
 
         st.subheader("Support vs. confidence (bubble size & color = lift)")
         fig_scatter = px.scatter(

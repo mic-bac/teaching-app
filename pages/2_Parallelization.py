@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from utils import io_utils
-from utils.compute_utils import run_benchmark
+from utils.compute_utils import benchmark_reading, run_benchmark
 from utils.data_generator import generate_dataset
 from utils.teaching import source_of, split_script_blocks
 
@@ -174,6 +174,8 @@ see how they compare.
             chart_df.style.format({"Seconds": "{:.6f}"}),
             width="stretch",
         )
+        with st.container(border=True):
+            st.markdown("**What you just saw**\n\n" + benchmark_reading(timings))
     else:
         st.info("Choose a dataset size above and click **Start Benchmark Race**.")
 
@@ -340,6 +342,8 @@ that runs. Scroll to the bottom to race them.
             chart_df.style.format({"Seconds": "{:.6f}"}),
             width="stretch",
         )
+        with st.container(border=True):
+            st.markdown("**What you just saw**\n\n" + io_utils.io_reading(timings, count))
     else:
         st.info("Set a URL and request count above, then click **Start Download Race**.")
 
@@ -348,7 +352,7 @@ with st.container(border=True):
         """
 🎯 **What to remember**
 - **Computing a lot → use more cores** (parallelism) — or, better still, a vectorized library call.
-- **Waiting a lot → overlap the waiting** (threads, async) — more cores barely help.
+- **Waiting a lot → overlap the waiting** (threads, async) — what counts is how many waits overlap, not how many cores you have.
 - **Measure first:** the race shows that the "obvious" fix is often not the fastest one.
 """
     )

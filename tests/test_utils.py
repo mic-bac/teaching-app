@@ -1361,3 +1361,30 @@ def test_notebook_cells_and_code_line_count(tmp_path):
 def test_workflow_diagram_uses_the_real_training_numbers():
     dot = detection_utils.workflow_dot({"train_images": 38, "val_images": 12, "epochs": 50, "training_minutes": 12.6})
     assert "50 photos" in dot and "50 rounds" in dot and "~13 min" in dot
+
+
+# ---------------------------------------------------------------------------
+# The plain-language readings under the two Parallelization races
+# ---------------------------------------------------------------------------
+def test_benchmark_reading_reports_both_speedups():
+    text = compute_utils.benchmark_reading({"Serial": 2.0, "Parallel": 0.5, "Vectorized": 0.001})
+    assert "4.0× faster" in text and "2,000× faster" in text
+
+
+def test_benchmark_reading_admits_when_parallel_does_not_pay_off():
+    text = compute_utils.benchmark_reading({"Serial": 0.1, "Parallel": 0.3, "Vectorized": 0.001})
+    assert "not faster" in text
+
+
+def test_io_reading_explains_multiprocessing_as_overlapped_waiting():
+    timings = {"Sequential": 10.0, "Threaded": 2.0, "Async": 0.5, "Multiprocessing": 1.0}
+    text = io_utils.io_reading(timings, count=80, processes=16)
+    assert "5.0× faster" in text and "20.0× faster" in text and "16 at a time" in text
+    assert "not because the cores compute" in text
+
+
+def test_read_rule_turns_the_three_numbers_into_a_sentence():
+    rule = pd.Series({"antecedent_str": "pasta", "consequent_str": "sauce",
+                      "support": 0.01, "confidence": 0.4, "lift": 2.5})
+    text = recommender_utils.read_rule(rule, n_baskets=1000)
+    assert "40%" in text and "2.5× more often" in text and "10 of 1,000 baskets" in text

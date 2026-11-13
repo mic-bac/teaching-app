@@ -204,8 +204,8 @@ def test_survival_page_shows_kaplan_meier_readouts():
     assert sample, "sample-size control not found"
     sample[0].set_value(1000).run()
     assert not at.exception
-    # S(t) readouts are rendered straight from the Kaplan-Meier curve.
-    assert any(m.label.startswith("S(12") for m in at.metric)
+    # Survival readouts are rendered straight from the Kaplan-Meier curve.
+    assert any(m.label == "Still customers after 12 months" for m in at.metric)
 
 
 def test_survival_page_trains_models_and_scores_them_over_time():

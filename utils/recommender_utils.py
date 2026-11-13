@@ -402,6 +402,23 @@ def make_rules(itemsets, min_confidence=0.1) -> pd.DataFrame:
     return rules
 
 
+def read_rule(rule: pd.Series, n_baskets: int) -> str:
+    """One rule in a plain sentence — what support, confidence and lift *say*.
+
+    The three numbers answer three business questions: how often does this
+    happen at all (support → a basket count), how reliable is it (confidence),
+    and is it more than coincidence (lift vs. 1).
+    """
+    together = round(rule["support"] * n_baskets)
+    return (
+        f"**Reading the top rule:** of the baskets with *{rule['antecedent_str']}*, "
+        f"**{rule['confidence']:.0%}** also contain *{rule['consequent_str']}* — that is "
+        f"**{rule['lift']:.1f}× more often** than in an average basket (lift). But it happens in "
+        f"only {together:,} of {n_baskets:,} baskets (support), so check that a rule is "
+        "frequent enough to matter before you build a promotion on it."
+    )
+
+
 def get_basket_recommendations(item, rules, top_n=5):
     """Recommend items frequently bought together with ``item``.
 

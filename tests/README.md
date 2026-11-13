@@ -51,6 +51,9 @@ Automated tests for the Streamlit teaching app.
     mAP level, the before/after table, credit parsing and the notebook's code-line count. The
     Object Detection smoke test moves the threshold slider (skipped if the sibling results are
     absent).
+  - The plain-language readings shown under results: `benchmark_reading` / `io_reading` (both
+    Parallelization races, incl. multiprocessing explained as overlapped waiting) and
+    `read_rule` (the top association rule as a sentence).
   - `test_sibling_alignment` also checks that `object-detection/results/` was exported with the
     notebook's current EPOCHS / BATCH / IMG_SIZE (skipped if the sibling is absent).
   - `data_generator.generate_dataset` — shape, column names, value range.
