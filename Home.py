@@ -8,7 +8,6 @@ Landing page for the teaching app. Run with:
 
 import streamlit as st
 
-from utils.data_generator import generate_dataset
 
 st.set_page_config(page_title="Teaching App", layout="wide", page_icon="🎓")
 
@@ -141,14 +140,3 @@ with col9:
             label="Open Object Detection",
             icon="🍝",
         )
-
-st.divider()
-
-with st.expander("📊 About this dataset"):
-    st.write(
-        "Several lessons use a randomly generated dataset. Below is a small "
-        "1,000-row sample produced by the cached `generate_dataset` helper."
-    )
-    sample = generate_dataset(1000)
-    st.dataframe(sample.head(), width="stretch")
-    st.caption(f"Sample shape: {sample.shape[0]} rows × {sample.shape[1]} columns")
