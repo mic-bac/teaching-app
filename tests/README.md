@@ -45,6 +45,14 @@ Automated tests for the Streamlit teaching app.
   - forecasting: the feature table drops the first year per store (`lag_52`), the vectorised
     per-store trend in `fit_hybrid` keeps stores apart, and one-Holt-Winters-per-store reports
     accuracy and cost. The Forecasting page smoke test presses all four experiment buttons.
+  - `detection_utils` — on a tiny fake `results/` export (no sibling, no torch): flattening
+    the stored boxes, the confidence threshold (stricter never keeps more boxes), boxes really
+    drawn on the photo, the YOLO label format, IoU from 0 to 1, the first epoch reaching a
+    mAP level, the before/after table, credit parsing and the notebook's code-line count. The
+    Object Detection smoke test moves the threshold slider (skipped if the sibling results are
+    absent).
+  - `test_sibling_alignment` also checks that `object-detection/results/` was exported with the
+    notebook's current EPOCHS / BATCH / IMG_SIZE (skipped if the sibling is absent).
   - `data_generator.generate_dataset` — shape, column names, value range.
   - `compute_utils` — serial/parallel/vectorized results agree, and
     `run_benchmark` returns the expected keys/types.

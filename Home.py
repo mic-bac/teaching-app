@@ -15,8 +15,8 @@ st.set_page_config(page_title="Teaching App", layout="wide", page_icon="🎓")
 st.title("🎓 Welcome to the Teaching App")
 st.markdown(
     """
-    The tools behind *"customers also bought"*, churn warnings, customer segments and sales
-    forecasts are not magic — and you can use them yourself. Every lesson here runs **real
+    The tools behind *"customers also bought"*, churn warnings, customer segments, sales
+    forecasts and photo recognition are not magic — and you can use them yourself. Every lesson here runs **real
     code on real data**: move a slider, press a button, and watch what happens. No maths
     degree required; curiosity is enough.
 
@@ -28,6 +28,7 @@ st.markdown(
     - 🧩 **Customer Segmentation** — RFM, customer lifetime value and clustering.
     - 📈 **Time Series** — is a series forecastable at all, and what classical models make of it.
     - 🔮 **Forecasting** — Prophet and XGBoost: when they are worth it, and when a simple forecast wins.
+    - 🍝 **Object Detection** — find things in photos, and teach a model something new with a few labelled pictures.
 
     Pick a lesson below to get started — each one ends with **🎯 What to remember**.
     """
@@ -145,6 +146,19 @@ with col8:
             "pages/8_Forecasting.py",
             label="Open Forecasting",
             icon="🔮",
+        )
+
+with col9:
+    with st.container(border=True):
+        st.markdown("### 🍝 Object Detection")
+        st.write(
+            "What a detector sees in a photo, and how ~50 labelled pictures teach a free YOLO "
+            "model to find something new — results of a real fine-tuning run."
+        )
+        st.page_link(
+            "pages/9_Object_Detection.py",
+            label="Open Object Detection",
+            icon="🍝",
         )
 
 st.divider()

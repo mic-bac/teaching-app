@@ -2,8 +2,8 @@
 name: alignment-checker
 description: >
   Audits whether the Streamlit teaching app has drifted, content-wise, from its sibling
-  lesson repos (parallelization/, postgresql/, recommender/, predictions/, segmentation/, and
-  future object-detection/). The app either DISPLAYS a sibling file verbatim, RE-IMPLEMENTS its
+  lesson repos (parallelization/, postgresql/, recommender/, predictions/, segmentation/,
+  object-detection/). The app either DISPLAYS a sibling file verbatim, RE-IMPLEMENTS its
   logic in utils/, or IMPORTS its src/ modules, so a sibling edit can silently diverge from
   what the app runs. Use when asked to "check alignment", "check drift", "are we still in sync with the
   siblings", or proactively after editing a sibling repo or an app util that mirrors one.
@@ -74,6 +74,8 @@ each of these paths exists:
 - `pages/6_Segmentation.py` reads `segmentation/{rfm,cltv,clustering}.py`.
 - `pages/7_Time_Series.py` reads `predictions/timeseries.py`.
 - `pages/8_Forecasting.py` reads `predictions/forecasting.py`.
+- `pages/9_Object_Detection.py` reads `object-detection/showcase.ipynb` (via
+  `detection_utils.notebook_cells`) and `object-detection/export_results.py`.
 - (When new pages appear, add their `read_text` targets here via step-3 discovery.)
 
 ### B. Refactored logic — utils that can silently diverge (the core check)
@@ -178,6 +180,14 @@ instead of the lesson.
   `external_features_cv`, `department_grain`, `detrending_experiment`, `control_detrending`) —
   compare feature lists (`PANEL_FEATURES`, `DEPT_FEATURES`, `NO_LAGS`), the depth list
   (2, 4, 6, 10), Prophet's holiday settings and the CO₂ 52-week horizon with `forecasting.py`.
+- **`utils/detection_utils.py` ↔ `object-detection/results/`** (category C — reads exported
+  data, never imports the sibling). Check `results/detections.json` still has the keys the util
+  reads (`draw_confidence`, `models.{pretrained,fine_tuned}.images.<folder/file>.{width,height,
+  detections[label,confidence,box]}`, `training.{epochs,train_images,val_images,
+  training_minutes,best_epoch,best}`), `results/training/results.csv` still has the
+  `metrics/*(B)` and `*/box_loss` columns, and every photo in `results/images/` has a row in
+  `results/CREDITS.md`. If `showcase.ipynb` changed EPOCHS/BATCH/IMG_SIZE or the dataset but
+  `results/` was not re-exported, that is DRIFT (`training.settings` records what was run).
 - `tests/test_utils.py` exercises the segmentation re-exports — flag only what it doesn't cover.
 - `tests/test_sibling_alignment.py` regex-reads sibling hyperparameters and compares them with
   the app (category B); trust it for the values it lists and spend the audit on logic.

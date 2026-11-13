@@ -34,6 +34,11 @@ url = "https://github.com/mic-bac/recommender.git"
 [siblings.segmentation]
 url = "https://github.com/mic-bac/segmentation.git"
 
+[siblings.object-detection]
+url = "https://github.com/mic-bac/object-detection.git"
+# The app only reads object-detection/results/ (exported detections, metrics,
+# openly licensed photos) — no weights, no torch, no YOLO in the app.
+
 # Public datasets a deployment can download without credentials. Everything
 # else (Kaggle downloads, the 65 MB UCI retail file) is left out on purpose:
 # the lessons fall back to synthetic data and say so on screen.

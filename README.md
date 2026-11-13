@@ -39,6 +39,12 @@ one interactive tool:
   one short series and winning as one model for 45 stores (forecasting at scale); early
   stopping and overfitting; testing external data; the department level where MAPE breaks;
   and detrending — a fix that helps or hurts depending on the diagnosis.
+- **🍝 Object Detection** — *how hard is it to teach a model something new?* A pretrained
+  YOLO model's boxes, labels and confidences (with a live threshold slider), the Label Studio
+  labelling workflow and the YOLO label format, a real fine-tuning run (50 photos, ~13 minutes
+  on a laptop CPU) read in plain words, before/after on look-alike dishes, the whole notebook —
+  and the AGPL licence question. **Results only:** the app reads what the sibling's
+  `export_results.py` stored and never installs torch or runs YOLO.
 
 ## Quickstart
 
@@ -125,6 +131,7 @@ pages/
   6_Segmentation.py         # Customer segmentation lesson UI (RFM, CLTV, clustering)
   7_Time_Series.py          # Time series lesson UI (suitability, decomposition, classical models)
   8_Forecasting.py          # Forecasting lesson UI (Prophet, XGBoost, grain, detrending)
+  9_Object_Detection.py     # Object detection lesson UI (YOLO results only: threshold, fine-tuning)
 utils/
   data_generator.py         # @st.cache_data random dataset generator
   db_utils.py               # SQLAlchemy connection + CRUD/introspection/run_query (Postgres → SQLite fallback)
@@ -136,6 +143,7 @@ utils/
   survival_utils.py         # Kaplan-Meier, Cox / RSF / Survival SVM, censoring-aware metrics
   segmentation_utils.py     # Thin adapter that imports segmentation/src/* (RFM, CLTV, clustering)
   forecasting_utils.py      # Thin adapter that imports predictions/src/* (time series, forecasting)
+  detection_utils.py        # Reads object-detection/results/ (boxes, metrics, credits); no torch
 tests/                      # pytest + Streamlit AppTest suite
 data/                       # Local SQLite fallback DB lives here (gitignored)
 ```
@@ -173,6 +181,10 @@ which already reuses `MAX(id) + 1`.
 - The Parallelization page **generates data on the fly** at the slider-selected size; it does
   not load the large `parallelization/data/parallel_big_data.csv`.
 - The R script (`parallelization/parallel/parallel.R`) is **displayed only, never executed**.
+- The Object Detection page **never runs YOLO**: it reads `object-detection/results/`
+  (detections stored down to 5 % confidence, training metrics, openly licensed photos) and
+  redraws boxes with Pillow. That keeps torch out of the app env and the app outside the AGPL
+  licence of Ultralytics YOLO; the sibling repo that does run YOLO is AGPL-3.0.
 - The Propensity and Survival pages fit their models on a **slider-selected sample** of the
   ~505,000-customer churn dataset, so a live demo never waits minutes for a hyperparameter
   search. If the sibling repo's git-ignored Kaggle CSVs are missing, both pages fall back to a

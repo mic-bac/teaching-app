@@ -60,6 +60,6 @@ made `n_jobs=-1` single-threaded; scikit-learn 1.8 deprecated `penalty=` in favo
 | app (this repo) | 3.13 | synced ✅ (all tests pass) |
 | `segmentation` | 3.13 | synced ✅ (`openpyxl` for the one-time `fetch_data.py`; surfaced as the Segmentation page, whose `src/` modules the app imports directly) |
 | `parallelization` | 3.13 | synced ✅ (R excluded) |
-| `object-detection` | 3.13 | locked (run `uv sync` — large torch install) |
+| `object-detection` | 3.13 | synced ✅ (ultralytics + torch, a large install; surfaced as the Object Detection page, which only reads the exported `results/` — the app env has no torch) |
 | `predictions` | 3.13 | synced ✅ (`scikit-survival`/`xgboost` ship wheels; `prophet` + `statsmodels` for `timeseries.py`/`forecasting.py`; surfaced as the Propensity, Survival and Time Series pages — the app env now carries `statsmodels` + `prophet` too, since it imports `predictions/src`) |
 | `recommender` | 3.13 | synced ✅ (pure-Python: pandas/scikit-learn/mlxtend/plotly; surfaced as the Recommender page) |

@@ -51,7 +51,7 @@ teaching-app/            ← this repo (Streamlit orchestrator; git repo, branch
 | `pages/6_Segmentation.py` | `segmentation/` (rfm, cltv, clustering) | ✅ built |
 | `pages/7_Time_Series.py` | `predictions/timeseries.py` | ✅ built |
 | `pages/8_Forecasting.py` | `predictions/forecasting.py` | ✅ built |
-| `pages/9_Object_Detection.py` | `object-detection/` | 🔜 next — **results only** (no torch in the app) |
+| `pages/9_Object_Detection.py` | `object-detection/results/` | ✅ built — **results only** (no torch/YOLO in the app) |
 
 The time-series lessons import the sibling's pure modules (`predictions/src/{sales_data,
 ts_core,forecast_models,forecast_panel,control_series}.py`) through `utils/forecasting_utils.py`, loaded as
@@ -90,7 +90,13 @@ and the name `src` would otherwise collide with `segmentation/src`).
   `segmentation_utils.py` (RFM, cohort-measured CLTV, clustering — imports `segmentation/src/*`
   incl. `cltv_core`), `forecasting_utils.py` (time series + forecasting — imports
   `predictions/src/*` as a package; adds the lesson's CV loop, Christmas check and the slides'
-  Excel smoothing example).
+  Excel smoothing example), `detection_utils.py` (reads `object-detection/results/` — exported
+  boxes, training metrics, photo credits — and redraws boxes with Pillow; no torch).
+
+- **Object detection is results-only.** The sibling (AGPL-3.0, Ultralytics YOLO) exports with
+  `export_results.py`; the app never imports `ultralytics`/torch. Only openly licensed photos
+  (credited in `results/CREDITS.md`) are published — the original training photos and weights
+  stay local and git-ignored.
 
 - **Two ways a util relates to its sibling.** Most *re-implement* the sibling's logic, because
   `predictions/{propensity,survival}.py` are `# %%` scripts with top-level side effects and
@@ -122,7 +128,7 @@ and the name `src` would otherwise collide with `segmentation/src`).
 
 ## Testing (required for every change)
 
-- Run with `make test` / `uv run pytest`. All tests must stay green (185 as of 2026-11-13).
+- Run with `make test` / `uv run pytest`. All tests must stay green (198 as of 2026-11-13).
 - **`tests/test_sibling_alignment.py`** — drift guard: sibling hyperparameters are regex-read and
   compared with the app. Parameter differences for live-demo runtime are fine but must be
   recorded there as `"intentional"`; logic differences are not.

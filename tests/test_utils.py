@@ -1235,3 +1235,129 @@ def test_worker_pools_fork_instead_of_rerunning_the_page():
         assert pool.map(compute_utils.expensive_row_op, [np.ones(3)]) == [1.0]
     finally:
         pool.terminate()
+
+
+# ---------------------------------------------------------------------------
+# detection_utils — reads exported YOLO results; tested on a tiny fake export
+# ---------------------------------------------------------------------------
+from utils import detection_utils  # noqa: E402
+
+
+@pytest.fixture
+def fake_results(tmp_path):
+    """A miniature ``object-detection/results/`` with two photos and two models."""
+    from PIL import Image
+
+    for key in ("everyday/a.jpg", "spaghetti/b.jpg"):
+        (tmp_path / "images" / key).parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (200, 100), "white").save(tmp_path / "images" / key)
+    box = lambda label, conf, xyxy: {"class_id": 0, "label": label, "confidence": conf, "box": xyxy}  # noqa: E731
+    export = {
+        "export_confidence": 0.05, "draw_confidence": 0.25,
+        "models": {
+            "pretrained": {"weights": "yolo11n.pt", "classes": 80, "images": {
+                "everyday/a.jpg": {"width": 200, "height": 100, "detections": [
+                    box("cup", 0.9, [10, 10, 50, 50]), box("cup", 0.3, [60, 10, 90, 50]),
+                    box("fork", 0.1, [100, 10, 120, 90])]},
+                "spaghetti/b.jpg": {"width": 200, "height": 100, "detections": [
+                    box("bowl", 0.6, [20, 20, 180, 90])]},
+            }},
+            "fine_tuned": {"weights": "best.pt", "classes": 1, "images": {
+                "spaghetti/b.jpg": {"width": 200, "height": 100, "detections": [
+                    box("spaghetti_bolo", 0.95, [20, 20, 180, 90])]},
+            }},
+        },
+        "training": {"epochs": 3, "best_epoch": 3, "train_images": 38, "val_images": 12, "training_minutes": 12.6,
+                     "best": {"precision": 0.9, "recall": 1.0, "mAP50": 0.99, "mAP50-95": 0.6}},
+    }
+    (tmp_path / "detections.json").write_text(__import__("json").dumps(export))
+    (tmp_path / "training").mkdir()
+    (tmp_path / "training" / "results.csv").write_text(
+        "epoch, metrics/mAP50(B), metrics/precision(B)\n1,0.2,0.1\n2,0.95,0.8\n3,0.99,0.9\n"
+    )
+    (tmp_path / "CREDITS.md").write_text(
+        "| File | Original | Author | License |\n|---|---|---|---|\n"
+        "| `everyday/a.jpg` | [A cup.jpg](https://commons.wikimedia.org/wiki/File:A_cup.jpg) | Jo | CC0 |\n"
+    )
+    return tmp_path
+
+
+def test_detection_results_load_and_flatten(fake_results):
+    results = detection_utils.load_results(fake_results)
+    frame = detection_utils.detections_frame(results, "pretrained")
+    assert len(frame) == 4 and set(frame["label"]) == {"cup", "fork", "bowl"}
+    assert detection_utils.images_for(results, "pretrained", "everyday") == ["everyday/a.jpg"]
+    assert detection_utils.load_results(fake_results / "missing") is None
+
+
+def test_confidence_threshold_keeps_only_sure_boxes(fake_results):
+    results = detection_utils.load_results(fake_results)
+    frame = detection_utils.detections_frame(results, "pretrained")
+    assert len(detection_utils.above(frame, 0.25)) == 3
+    table = detection_utils.threshold_table(frame, thresholds=(0.05, 0.5, 0.95))
+    assert table["boxes kept"].tolist() == [4, 2, 0]  # more strict -> never more boxes
+    summary = detection_utils.label_summary(detection_utils.above(frame, 0.25))
+    assert summary.iloc[0]["label"] == "cup" and summary.iloc[0]["count"] == 2
+
+
+def test_draw_boxes_returns_the_photo_with_boxes(fake_results):
+    results = detection_utils.load_results(fake_results)
+    frame = detection_utils.detections_frame(results, "pretrained").query("image == 'everyday/a.jpg'")
+    image = detection_utils.draw_boxes(fake_results / "images" / "everyday" / "a.jpg", frame)
+    assert image.size == (200, 100)
+    assert image.getpixel((10, 30)) != (255, 255, 255)  # the cup box outline was drawn
+    empty = detection_utils.draw_boxes(fake_results / "images" / "everyday" / "a.jpg", frame.iloc[0:0])
+    assert empty.getpixel((10, 30)) == (255, 255, 255)
+
+
+def test_yolo_label_is_normalised_centre_and_size():
+    assert detection_utils.to_yolo_label([50, 25, 150, 75], 200, 100) == "0 0.5000 0.5000 0.5000 0.5000"
+
+
+def test_iou_runs_from_no_overlap_to_identical():
+    assert detection_utils.iou([0, 0, 10, 10], [0, 0, 10, 10]) == 1.0
+    assert detection_utils.iou([0, 0, 10, 10], [20, 20, 30, 30]) == 0.0
+    assert detection_utils.iou([0, 0, 10, 10], [5, 0, 15, 10]) == pytest.approx(1 / 3)
+
+
+def test_training_metrics_and_first_epoch_reaching_a_level(fake_results):
+    metrics = detection_utils.training_metrics(fake_results)
+    assert {"mAP50", "precision"} <= set(metrics.columns)
+    assert detection_utils.epochs_to_reach(metrics, "mAP50", 0.9) == 2
+    assert detection_utils.epochs_to_reach(metrics, "mAP50", 1.0) is None
+
+
+def test_compare_models_puts_before_and_after_side_by_side(fake_results):
+    results = detection_utils.load_results(fake_results)
+    table = detection_utils.compare_models(results, "spaghetti", 0.25)
+    row = table.iloc[0]
+    assert row["pretrained sees"] == "bowl (60%)" and row["fine-tuned sees"] == "spaghetti_bolo (95%)"
+    assert detection_utils.compare_models(results, "spaghetti", 0.99).iloc[0]["pretrained sees"] == "—"
+
+
+def test_credits_are_parsed_into_attribution_lines(fake_results):
+    assert detection_utils.load_credits(fake_results)["author"].tolist() == ["Jo"]
+    line = detection_utils.credits_markdown(fake_results)
+    assert line == "- everyday/a.jpg: [A cup.jpg](https://commons.wikimedia.org/wiki/File:A_cup.jpg) — Jo, CC0"
+    # Titles and URLs with parentheses (common on Wikimedia) pass through untouched.
+    (fake_results / "CREDITS.md").write_text(
+        "| `x.jpg` | [Dinner (2023).jpg](https://c.org/File:Dinner_(2023).jpg) | Al | CC BY 2.0 |\n"
+    )
+    assert "[Dinner (2023).jpg](https://c.org/File:Dinner_(2023).jpg) — Al" in detection_utils.credits_markdown(fake_results)
+
+
+def test_notebook_cells_and_code_line_count(tmp_path):
+    notebook = {"cells": [
+        {"cell_type": "markdown", "source": ["# Title"]},
+        {"cell_type": "code", "source": ["# comment\n", "x = 1\n", "\n", "print(x)"]},
+    ]}
+    path = tmp_path / "nb.ipynb"
+    path.write_text(__import__("json").dumps(notebook))
+    cells = detection_utils.notebook_cells(path)
+    assert cells[0] == ("markdown", "# Title")
+    assert detection_utils.code_line_count(cells) == 2
+
+
+def test_workflow_diagram_uses_the_real_training_numbers():
+    dot = detection_utils.workflow_dot({"train_images": 38, "val_images": 12, "epochs": 50, "training_minutes": 12.6})
+    assert "50 photos" in dot and "50 rounds" in dot and "~13 min" in dot

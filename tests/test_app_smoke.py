@@ -26,6 +26,7 @@ PAGES = [
     "pages/6_Segmentation.py",
     "pages/7_Time_Series.py",
     "pages/8_Forecasting.py",
+    "pages/9_Object_Detection.py",
 ]
 
 
@@ -277,3 +278,19 @@ def test_forecasting_page_runs_every_experiment():
         next(b for b in at.button if name in b.label).click().run()
         assert not at.exception, name
     assert "MAPE per department" in [m.label for m in at.metric]
+
+
+@pytest.mark.skipif(
+    not (ROOT / "object-detection" / "results" / "detections.json").exists(),
+    reason="object-detection sibling results not present",
+)
+def test_object_detection_threshold_slider_changes_the_boxes():
+    at = _run("pages/9_Object_Detection.py")
+    assert not at.exception
+    shown = lambda: next(m for m in at.metric if m.label == "Boxes shown").value  # noqa: E731
+    loose = shown()
+    at.slider(key="see_threshold").set_value(0.9).run()
+    assert not at.exception
+    assert int(shown()) <= int(loose)
+    at.selectbox(key="compare_photo").set_value(at.selectbox(key="compare_photo").options[-1]).run()
+    assert not at.exception

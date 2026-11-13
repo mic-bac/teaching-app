@@ -182,3 +182,18 @@ def test_segment_action_table_only_names_real_ladder_segments():
     assert referenced, "could not read the action table's keys"
     assert referenced <= names, f"action table names unknown segments: {referenced - names}"
     assert used == referenced
+
+
+def test_object_detection_results_were_exported_from_the_notebook_settings():
+    """Page 9 shows exported results; a notebook re-run with new settings needs a re-export."""
+    import json
+
+    notebook = ROOT / "object-detection" / "showcase.ipynb"
+    exported = ROOT / "object-detection" / "results" / "detections.json"
+    if not (notebook.exists() and exported.exists()):
+        pytest.skip("object-detection sibling or its results not present")
+    source = "".join("".join(c["source"]) for c in json.loads(notebook.read_text())["cells"])
+    settings = json.loads(exported.read_text())["training"]["settings"]
+    for name, key in [("EPOCHS", "epochs"), ("BATCH", "batch"), ("IMG_SIZE", "imgsz")]:
+        value = int(re.search(rf"^{name}\s*=\s*(\d+)", source, re.MULTILINE).group(1))
+        assert value == settings[key], f"{name}: notebook {value}, exported {settings[key]} — re-run export_results.py"
