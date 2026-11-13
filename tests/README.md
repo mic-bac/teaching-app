@@ -42,6 +42,9 @@ Automated tests for the Streamlit teaching app.
     Christmas lying before the first week a 52-week model can be tested on, the promotion
     break, the SARIMA label derived from the sibling, and `predictions/src` coexisting with
     `segmentation/src` in one process.
+  - forecasting: the feature table drops the first year per store (`lag_52`), the vectorised
+    per-store trend in `fit_hybrid` keeps stores apart, and one-Holt-Winters-per-store reports
+    accuracy and cost. The Forecasting page smoke test presses all four experiment buttons.
   - `data_generator.generate_dataset` — shape, column names, value range.
   - `compute_utils` — serial/parallel/vectorized results agree, and
     `run_benchmark` returns the expected keys/types.

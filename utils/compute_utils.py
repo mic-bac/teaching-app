@@ -13,6 +13,7 @@ Nothing in this module runs at import time; the demo is guarded under
 """
 
 from time import time, sleep
+import warnings
 from multiprocessing import cpu_count, get_context
 
 import numpy as np
@@ -38,6 +39,27 @@ def run_serial(data):
     return results, elapsed
 
 
+def fork_pool(processes: int | None = None, **kwargs):
+    """A process pool that starts workers by **fork** — on purpose, and explicitly.
+
+    Streamlit runs each page as Python's ``__main__`` module. The "spawn" and
+    "forkserver" start methods re-execute ``__main__`` in every worker, which
+    means re-running the whole *page* (data loading, model training, even a new
+    pool) in each worker — the app hangs. ``fork`` copies the running process
+    instead and never re-runs ``__main__``. It is requested explicitly because
+    Python 3.14 makes "forkserver" the default on Linux.
+
+    Python warns that forking a multi-threaded process (Streamlit's server is
+    one) *can* deadlock if another thread holds a lock at that instant. For a
+    short-lived worker pool in a single-user demo that risk is far smaller than
+    the certain hang above, so that one warning is silenced here — nowhere else.
+    """
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*use of fork\\(\\) may lead to deadlocks.*",
+                                category=DeprecationWarning)
+        return get_context("fork").Pool(processes, **kwargs)
+
+
 def run_parallel(data, n_cpu: int = 4):
     """Apply ``expensive_row_op`` across a ``multiprocessing.Pool``.
 
@@ -48,10 +70,7 @@ def run_parallel(data, n_cpu: int = 4):
     n_workers = min(n_cpu, cpu_count())
     try:
         time_start = time()
-        # "forkserver" instead of the default fork: the app runs inside Streamlit's
-        # multi-threaded server, and forking a threaded process can deadlock.
-        # (The sibling script is single-threaded, so it can keep the default.)
-        with get_context("forkserver").Pool(n_workers) as pool:
+        with fork_pool(n_workers) as pool:
             results = pool.map(expensive_row_op, data)
         elapsed = time() - time_start
         return results, elapsed

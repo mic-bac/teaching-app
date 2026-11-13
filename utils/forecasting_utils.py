@@ -46,6 +46,7 @@ try:  # pragma: no cover - exercised by the missing-sibling path
     fm = importlib.import_module(f"{_PKG}.forecast_models")
     _sales = importlib.import_module(f"{_PKG}.sales_data")
     _control = importlib.import_module(f"{_PKG}.control_series")
+    fp = importlib.import_module(f"{_PKG}.forecast_panel")
 
     # Re-exports — one import surface for the page. An outdated sibling checkout
     # imports fine but lacks newer names; that is reported, not crashed on.
@@ -69,6 +70,23 @@ try:  # pragma: no cover - exercised by the missing-sibling path
     deflate = _sales.deflate
     prepare_sales = _sales.prepare
     load_control_series = _control.load_control_series
+
+    # Forecasting lesson (Prophet, XGBoost, panels)
+    WALMART_HOLIDAYS = _sales.WALMART_HOLIDAYS
+    EXTERNAL_FEATURES = _sales.EXTERNAL_FEATURES
+    split_panel = tc.split_panel
+    fit_prophet = fm.fit_prophet
+    prophet_forecast_only = fm.prophet_forecast_only
+    prophet_components = fm.prophet_components
+    time_ordered_validation_split = fm.time_ordered_validation_split
+    fit_xgboost = fm.fit_xgboost
+    fit_random_forest = fm.fit_random_forest
+    fit_hybrid = fm.fit_hybrid
+    build_features = fp.build_features
+    score_panel = fp.score_panel
+    ets_per_store = fp.ets_per_store
+    CALENDAR = fp.CALENDAR
+    LAGS = fp.LAGS
 
     SIBLING_AVAILABLE = True
     SIBLING_ERROR = ""
@@ -250,3 +268,160 @@ digraph ts {
   data -> report -> parts -> stat -> split -> base -> models -> cv -> verdict;
 }
 """
+
+
+# ===========================================================================
+# Forecasting lesson (Prophet & XGBoost) — the script's inline steps as functions
+# ===========================================================================
+
+PANEL_FEATURES = None  # set below once the sibling is available
+if SIBLING_AVAILABLE:
+    PANEL_FEATURES = ["Store", "Size", "Type"] + CALENDAR + LAGS
+    DEPT_FEATURES = ["Store", "Dept", "Size", "Type"] + CALENDAR + LAGS
+    NO_LAGS = ["Store", "Size", "Type"] + CALENDAR
+
+
+def load_grains() -> dict:
+    """The same sales at three levels: chain total, 45 stores, ~3,300 departments."""
+    chain, stores, depts, source = prepare_sales(verbose=False)
+    return {"chain": chain, "stores": stores, "depts": depts, "source": source}
+
+
+def prophet_run(train: pd.Series, horizon: int, changepoint_prior_scale: float = 0.05) -> dict:
+    """Fit Prophet with the Walmart holidays; return forecast, interval and components.
+
+    Everything returned is plain data (no model object), so a page can cache it.
+    ``trend_drift_pct`` is how far the trend moves over the forecast horizon —
+    the number that shows *overshooting* when the changepoint setting is loose.
+    """
+    model, forecast = fit_prophet(train, horizon, holidays=WALMART_HOLIDAYS, country_holidays="US",
+                                  changepoint_prior_scale=changepoint_prior_scale)
+    future = forecast["ds"].iloc[-horizon:]
+    predicted = prophet_forecast_only(forecast, future)
+    trend = forecast.set_index("ds")["trend"]
+    return {
+        "forecast": forecast,
+        "predicted": predicted,
+        "components": prophet_components(model, forecast),
+        "trend_drift_pct": 100 * (trend.loc[future.iloc[-1]] / trend.loc[future.iloc[0]] - 1),
+    }
+
+
+def interval_coverage(actual: pd.Series, predicted: pd.DataFrame) -> float:
+    """Share of actual weeks inside Prophet's uncertainty band."""
+    a = actual.to_numpy()
+    return float(np.mean((a >= predicted["yhat_lower"].to_numpy()) & (a <= predicted["yhat_upper"].to_numpy())))
+
+
+def chain_tree_models(chain: pd.DataFrame, train_end: pd.Timestamp) -> dict:
+    """XGBoost and a random forest on the single chain series — too few rows.
+
+    Returns predictions for the test weeks and the number of rows the trees
+    actually trained on (143 weeks − 52 eaten by ``lag_52`` − the test window).
+    """
+    features = build_features(chain)
+    fit_rows = features[features["Date"] <= train_end]
+    test_rows = features[features["Date"] > train_end]
+    columns = CALENDAR + LAGS
+    a, b, c, d = time_ordered_validation_split(fit_rows[columns], fit_rows["Weekly_Sales"])
+    return {
+        "XGBoost": fit_xgboost(a, c, b, d).predict(test_rows[columns]),
+        "Random Forest": fit_random_forest(fit_rows[columns], fit_rows["Weekly_Sales"]).predict(test_rows[columns]),
+        "train_rows": len(fit_rows),
+        "features": features,
+    }
+
+
+def store_panel_run(store_panel: pd.DataFrame) -> dict:
+    """One XGBoost for all 45 stores: accuracy, speed, early stopping, importance."""
+    panel = build_features(store_panel, group="Store")
+    train, test = split_panel(panel, test_weeks=TEST_WEEKS)
+    a, b, c, d = time_ordered_validation_split(train[PANEL_FEATURES], train["Weekly_Sales"])
+    import time
+
+    start = time.perf_counter()
+    model = fit_xgboost(a, c, b, d)
+    seconds = time.perf_counter() - start
+    prediction = model.predict(test[PANEL_FEATURES])
+    return {
+        "panel": panel, "train": train, "test": test, "split": (a, b, c, d),
+        "train_rows": len(train),
+        "seconds": seconds,
+        "scores": {
+            "seasonal naive (t-52)": forecast_metrics(test["Weekly_Sales"], test["lag_52"]),
+            "XGBoost (one model)": forecast_metrics(test["Weekly_Sales"], prediction),
+        },
+        "importance": pd.Series(model.feature_importances_, index=PANEL_FEATURES).sort_values(),
+        "n_estimators": model.n_estimators,
+        "best_iteration": int(model.best_iteration),
+    }
+
+
+def depth_sweep(run: dict, depths=(2, 4, 6, 10)) -> pd.DataFrame:
+    """Tree depth vs training and test error — the bias-variance trade-off, measured."""
+    a, b, c, d = run["split"]
+    rows = []
+    for depth in depths:
+        model = fit_xgboost(a, c, b, d, max_depth=depth)
+        rows.append({
+            "max_depth": depth,
+            "train MAPE": forecast_metrics(c, model.predict(a))["MAPE"],
+            "test MAPE": forecast_metrics(run["test"]["Weekly_Sales"], model.predict(run["test"][PANEL_FEATURES]))["MAPE"],
+        })
+    frame = pd.DataFrame(rows)
+    frame["gap"] = frame["test MAPE"] - frame["train MAPE"]
+    return frame
+
+
+def external_features_cv(panel: pd.DataFrame) -> pd.DataFrame:
+    """Three folds with and without temperature, fuel price, CPI and unemployment."""
+    rows = []
+    for name, columns in [("calendar + lags", PANEL_FEATURES),
+                          ("+ temperature, fuel, CPI, unemployment", PANEL_FEATURES + EXTERNAL_FEATURES)]:
+        scores = score_panel(panel, columns)
+        rows.append({"feature set": name, **{f"fold {i}": v for i, v in enumerate(scores)}, "mean": np.mean(scores)})
+    return pd.DataFrame(rows)
+
+
+def department_grain(dept_panel: pd.DataFrame) -> dict:
+    """The same model per store × department — where MAPE stops being usable."""
+    features = build_features(dept_panel, group=["Store", "Dept"])
+    train, test = split_panel(features, test_weeks=TEST_WEEKS)
+    prediction = fit_xgboost(train[DEPT_FEATURES], train["Weekly_Sales"]).predict(test[DEPT_FEATURES])
+    summed = test.assign(prediction=prediction).groupby("Date")[["Weekly_Sales", "prediction"]].sum()
+    return {
+        "series": features.groupby(["Store", "Dept"]).ngroups,
+        "model": forecast_metrics(test["Weekly_Sales"], prediction),
+        "baseline": forecast_metrics(test["Weekly_Sales"], test["lag_52"]),
+        "summed": forecast_metrics(summed["Weekly_Sales"], summed["prediction"]),
+        "small_rows": int((test["Weekly_Sales"] < 100).sum()),
+        "test_rows": len(test),
+    }
+
+
+def detrending_experiment(panel: pd.DataFrame) -> pd.DataFrame:
+    """Plain XGBoost vs trend + XGBoost, with and without lag features (3 folds each)."""
+    rows = []
+    for lags, columns in [("with lags", PANEL_FEATURES), ("no lags", NO_LAGS)]:
+        for hybrid in (False, True):
+            scores = score_panel(panel, columns, hybrid=hybrid)
+            rows.append({"features": lags, "model": "trend + XGBoost" if hybrid else "plain XGBoost",
+                         **{f"fold {i}": v for i, v in enumerate(scores)}, "mean": np.mean(scores)})
+    return pd.DataFrame(rows)
+
+
+def control_detrending() -> dict:
+    """The same comparison on weekly CO₂ — a series with a real trend (52-week horizon)."""
+    control = load_control_series()
+    frame = pd.DataFrame({"Date": control.index, "Weekly_Sales": control.to_numpy()})
+    features = build_features(frame)
+    train, test = split_panel(features, test_weeks=52)
+    columns = ["week", "week_sin", "week_cos", "t"]
+    plain = fit_xgboost(train[columns], train["Weekly_Sales"]).predict(test[columns])
+    _, hybrid = fit_hybrid(train, test, columns)
+    return {
+        "dates": test["Date"], "actual": test["Weekly_Sales"].to_numpy(), "plain": plain, "hybrid": hybrid,
+        "history": train[["Date", "Weekly_Sales"]].tail(156),
+        "plain_mape": forecast_metrics(test["Weekly_Sales"], plain)["MAPE"],
+        "hybrid_mape": forecast_metrics(test["Weekly_Sales"], hybrid)["MAPE"],
+    }

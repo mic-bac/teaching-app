@@ -34,6 +34,11 @@ one interactive tool:
   lecture's own Excel smoothing example, reproduced by the real code), baselines,
   Holt-Winters and SARIMA, rolling-origin cross-validation — and why Christmas cannot be
   tested with 2.75 seasons of history.
+- **🔮 Forecasting** — *are Prophet and XGBoost worth it here?* Prophet's explainable parts
+  (trend, season, holidays) and the setting that makes forecasts overshoot; XGBoost losing on
+  one short series and winning as one model for 45 stores (forecasting at scale); early
+  stopping and overfitting; testing external data; the department level where MAPE breaks;
+  and detrending — a fix that helps or hurts depending on the diagnosis.
 
 ## Quickstart
 
@@ -119,6 +124,7 @@ pages/
   5_Survival.py             # Survival analysis lesson UI
   6_Segmentation.py         # Customer segmentation lesson UI (RFM, CLTV, clustering)
   7_Time_Series.py          # Time series lesson UI (suitability, decomposition, classical models)
+  8_Forecasting.py          # Forecasting lesson UI (Prophet, XGBoost, grain, detrending)
 utils/
   data_generator.py         # @st.cache_data random dataset generator
   db_utils.py               # SQLAlchemy connection + CRUD/introspection/run_query (Postgres → SQLite fallback)

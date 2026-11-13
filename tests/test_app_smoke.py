@@ -25,6 +25,7 @@ PAGES = [
     "pages/5_Survival.py",
     "pages/6_Segmentation.py",
     "pages/7_Time_Series.py",
+    "pages/8_Forecasting.py",
 ]
 
 
@@ -264,3 +265,15 @@ def test_time_series_page_reproduces_the_slide_and_fits_sarima():
     sarima.click().run()
     assert not at.exception
     assert "SARIMA MAPE" in [m.label for m in at.metric]
+
+
+def test_forecasting_page_runs_every_experiment():
+    at = AppTest.from_file(str(ROOT / "pages/8_Forecasting.py"), default_timeout=300)
+    at.run()
+    assert not at.exception
+    labels = [m.label for m in at.metric]
+    assert "Prophet MAPE" in labels and "Trees actually used" in labels
+    for name in ("department model", "Run the experiment", "Run the comparison", "Holt-Winters model per store"):
+        next(b for b in at.button if name in b.label).click().run()
+        assert not at.exception, name
+    assert "MAPE per department" in [m.label for m in at.metric]

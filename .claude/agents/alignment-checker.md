@@ -73,6 +73,7 @@ each of these paths exists:
   `predictions/survival.py`.
 - `pages/6_Segmentation.py` reads `segmentation/{rfm,cltv,clustering}.py`.
 - `pages/7_Time_Series.py` reads `predictions/timeseries.py`.
+- `pages/8_Forecasting.py` reads `predictions/forecasting.py`.
 - (When new pages appear, add their `read_text` targets here via step-3 discovery.)
 
 ### B. Refactored logic — utils that can silently diverge (the core check)
@@ -171,6 +172,12 @@ instead of the lesson.
   `timeseries.py` — the rolling-origin CV loop (`cross_validate`) and the Christmas check
   (`christmas_check`, -6 weeks offset, 52-week minimum history) — compare those with the script.
   `slide_smoothing_table` must keep reproducing slides 70/78 (MAE 10.20, RMSE 13.60 at α = 0.4).
+  Forecasting adds `predictions/src/forecast_panel.py` (`build_features`, `CALENDAR`, `LAGS`,
+  `score_panel`, `ets_per_store`). The app composes the script's sections in
+  `forecasting_utils` (`prophet_run`, `chain_tree_models`, `store_panel_run`, `depth_sweep`,
+  `external_features_cv`, `department_grain`, `detrending_experiment`, `control_detrending`) —
+  compare feature lists (`PANEL_FEATURES`, `DEPT_FEATURES`, `NO_LAGS`), the depth list
+  (2, 4, 6, 10), Prophet's holiday settings and the CO₂ 52-week horizon with `forecasting.py`.
 - `tests/test_utils.py` exercises the segmentation re-exports — flag only what it doesn't cover.
 - `tests/test_sibling_alignment.py` regex-reads sibling hyperparameters and compares them with
   the app (category B); trust it for the values it lists and spend the audit on logic.

@@ -1178,3 +1178,60 @@ def test_two_sibling_src_packages_coexist_in_one_process():
 def test_sarima_label_follows_the_sibling_defaults():
     _needs_predictions()
     assert forecasting_utils.sarima_label() == "SARIMA(1,0,1)(0,1,1,52)"
+
+
+
+# ---------------------------------------------------------------------------
+# Forecasting lesson (Prophet & XGBoost)
+# ---------------------------------------------------------------------------
+
+
+def _toy_panel(n_stores=3, n=143, seed=0):
+    rng = np.random.default_rng(seed)
+    weeks = pd.date_range("2010-02-05", periods=n, freq="7D")
+    rows = []
+    for store in range(1, n_stores + 1):
+        level = 1000 * store
+        season = 100 * np.sin(2 * np.pi * np.arange(n) / 52)
+        rows.append(pd.DataFrame({"Store": store, "Date": weeks, "Size": 100 * store, "Type": "A",
+                                  "Weekly_Sales": level + season + rng.normal(0, 10, n)}))
+    return pd.concat(rows, ignore_index=True)
+
+
+def test_feature_table_loses_the_first_year_to_lag_52():
+    _needs_predictions()
+    features = forecasting_utils.build_features(_toy_panel(), group="Store")
+    assert set(forecasting_utils.CALENDAR + forecasting_utils.LAGS) <= set(features.columns)
+    # lag_52 needs a full year of history, so 52 weeks per store are dropped.
+    assert len(features) == 3 * (143 - 52)
+    assert features["lag_52"].notna().all()
+
+
+def test_hybrid_trend_is_one_straight_line_per_store():
+    """The vectorised per-store trend must equal fitting each store on its own."""
+    _needs_predictions()
+    panel = forecasting_utils.build_features(_toy_panel(), group="Store")
+    train, test = forecasting_utils.split_panel(panel, test_weeks=13)
+    trends, prediction = forecasting_utils.fit_hybrid(train, test, ["t", "week"], group="Store")
+    assert set(trends) == {1, 2, 3} and len(prediction) == len(test)
+    # Store levels differ by 1000 per store; the forecast keeps them apart.
+    by_store = pd.Series(prediction, index=test["Store"].to_numpy()).groupby(level=0).mean()
+    assert by_store.is_monotonic_increasing
+
+
+def test_ets_per_store_reports_accuracy_and_cost():
+    _needs_predictions()
+    result = forecasting_utils.ets_per_store(_toy_panel())
+    assert result["models"] == 3
+    assert 0 < result["mape"] < 10 and result["seconds"] > 0
+
+
+def test_worker_pools_fork_instead_of_rerunning_the_page():
+    """Streamlit runs each page as __main__; spawn/forkserver workers re-execute
+    __main__ — i.e. the whole page — and the app hangs. Pools must fork."""
+    pool = compute_utils.fork_pool(1)
+    try:
+        assert pool._ctx.get_start_method() == "fork"
+        assert pool.map(compute_utils.expensive_row_op, [np.ones(3)]) == [1.0]
+    finally:
+        pool.terminate()

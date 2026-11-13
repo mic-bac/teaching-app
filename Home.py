@@ -27,6 +27,7 @@ st.markdown(
     - ⏳ **Survival Analysis** — time-to-event: *when* will they churn, not just whether.
     - 🧩 **Customer Segmentation** — RFM, customer lifetime value and clustering.
     - 📈 **Time Series** — is a series forecastable at all, and what classical models make of it.
+    - 🔮 **Forecasting** — Prophet and XGBoost: when they are worth it, and when a simple forecast wins.
 
     Pick a lesson below to get started — each one ends with **🎯 What to remember**.
     """
@@ -131,6 +132,19 @@ with col7:
             "pages/7_Time_Series.py",
             label="Open Time Series",
             icon="📈",
+        )
+
+with col8:
+    with st.container(border=True):
+        st.markdown("### 🔮 Forecasting")
+        st.write(
+            "Prophet's explainable forecasts and XGBoost's forecasting at scale — and why the "
+            "winner depends on the level of detail you forecast at."
+        )
+        st.page_link(
+            "pages/8_Forecasting.py",
+            label="Open Forecasting",
+            icon="🔮",
         )
 
 st.divider()

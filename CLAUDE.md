@@ -50,11 +50,11 @@ teaching-app/            ← this repo (Streamlit orchestrator; git repo, branch
 | `pages/5_Survival.py` | `predictions/survival.py` | ✅ built |
 | `pages/6_Segmentation.py` | `segmentation/` (rfm, cltv, clustering) | ✅ built |
 | `pages/7_Time_Series.py` | `predictions/timeseries.py` | ✅ built |
-| `pages/8_Forecasting.py` | `predictions/forecasting.py` | 🔜 next — reuses `forecasting_utils.py` |
-| `pages/9_Object_Detection.py` | `object-detection/` | 🔜 last — **results only** (no torch in the app) |
+| `pages/8_Forecasting.py` | `predictions/forecasting.py` | ✅ built |
+| `pages/9_Object_Detection.py` | `object-detection/` | 🔜 next — **results only** (no torch in the app) |
 
 The time-series lessons import the sibling's pure modules (`predictions/src/{sales_data,
-ts_core,forecast_models,control_series}.py`) through `utils/forecasting_utils.py`, loaded as
+ts_core,forecast_models,forecast_panel,control_series}.py`) through `utils/forecasting_utils.py`, loaded as
 a package with `teaching.load_sibling_package` (their modules import each other relatively,
 and the name `src` would otherwise collide with `segmentation/src`).
 
@@ -77,8 +77,9 @@ and the name `src` would otherwise collide with `segmentation/src`).
 - **`st.*` lives only in `Home.py` and `pages/`.** All logic goes in **`utils/` as UI-free,
   importable, unit-testable functions.** `utils/teaching.py` is deliberately Streamlit-free.
 - Imports are `from utils.x import ...` — the app always runs from the repo root.
-- Width: use `width="stretch"` (not the removed `use_container_width`). Process pools use
-  `get_context("forkserver")` — forking Streamlit's multi-threaded server can deadlock.
+- Width: use `width="stretch"` (not the removed `use_container_width`). Process pools go
+  through `compute_utils.fork_pool` (explicit **fork**): Streamlit runs each page as `__main__`,
+  and spawn/forkserver workers re-execute `__main__` — the whole page — so the app hangs.
 - **First call in every page is `st.set_page_config(...)`**, `layout="wide"`.
 - Existing utils: `data_generator.py` (`@st.cache_data`), `db_utils.py` (SQLAlchemy Core,
   Postgres→SQLite), `compute_utils.py` (serial/parallel/vectorized; `expensive_row_op` must
@@ -121,7 +122,7 @@ and the name `src` would otherwise collide with `segmentation/src`).
 
 ## Testing (required for every change)
 
-- Run with `make test` / `uv run pytest`. All tests must stay green (179 as of 2026-11-12).
+- Run with `make test` / `uv run pytest`. All tests must stay green (185 as of 2026-11-13).
 - **`tests/test_sibling_alignment.py`** — drift guard: sibling hyperparameters are regex-read and
   compared with the app. Parameter differences for live-demo runtime are fine but must be
   recorded there as `"intentional"`; logic differences are not.
