@@ -118,14 +118,11 @@ with control:
         help="Survival models scale worse than classifiers, so this lesson samples smaller than the propensity one.",
     )
 with status:
-    churn_df, data_source = cached_churn(sample_size)
-    if data_source == "kaggle":
-        st.success(f"Kaggle churn dataset — {len(churn_df):,} customers sampled from the sibling `predictions/` repo.")
-    else:
-        st.warning(
-            "The Kaggle CSVs were not found in `predictions/data/churn/`, so this lesson is running on a "
-            "**synthetic** customer base with the same columns. Everything still works; the numbers are simulated."
-        )
+    churn_df, _ = cached_churn(sample_size)
+    st.caption(
+        f"A subscription business with **{len(churn_df):,} customers** — how long each has been with us "
+        f"(Tenure) and whether they have left yet ({churn_df['Churn'].mean():.0%} have)."
+    )
 
 split = cached_split(sample_size)
 

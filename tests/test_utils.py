@@ -1161,6 +1161,69 @@ def test_learning_curve_diagnosis_compares_against_the_best_model():
     assert kind == "healthy"
 
 
+def test_learning_curve_diagnosis_says_what_to_do_per_model():
+    _, message = propensity_utils.diagnose_learning_curve(0.99, 0.80, 0.85, "XGBoost")
+    assert "max_depth" in message
+    _, message = propensity_utils.diagnose_learning_curve(0.99, 0.80, 0.85, "Logistic Regression")
+    assert "lower `C`" in message
+    _, message = propensity_utils.diagnose_learning_curve(0.66, 0.65, 0.90)
+    assert "Fix:" in message  # a generic remedy without a model name
+
+
+def test_validation_curve_reading_explains_why_the_best_is_best():
+    curve = pd.DataFrame({"value": [1, 3, 10], "train_mean": [0.80, 0.92, 0.99],
+                          "validation_mean": [0.80, 0.90, 0.85]})
+    text = propensity_utils.validation_curve_reading(curve, {"param": "max_depth", "simpler": "lower"})
+    assert "max_depth = 3" in text
+    assert "Simpler (max_depth = 1): validation only 0.800" in text
+    assert "More complex (max_depth = 10): training climbs to 0.990" in text
+    # For alpha, a HIGHER value is the simpler model, so the sides swap.
+    text = propensity_utils.validation_curve_reading(curve.assign(value=[1.0, 0.1, 0.01]),
+                                                     {"param": "alpha", "simpler": "higher"})
+    assert "Simpler (alpha = 0.01)" not in text and "More complex (alpha = 0.01)" in text
+    # Validation lower on the complex side WITHOUT a widening gap is not memorising.
+    even = curve.assign(train_mean=[0.81, 0.91, 0.86])
+    text = propensity_utils.validation_curve_reading(even, {"param": "max_depth", "simpler": "lower"})
+    assert "buys nothing" in text and "memorising" not in text
+
+
+def test_metric_guide_speaks_in_customers():
+    confusion = pd.DataFrame([[80, 20], [10, 90]],
+                             index=["Actually stayed", "Actually churned"],
+                             columns=["Predicted stay", "Predicted churn"])
+    metrics = {"Accuracy": 0.85, "Precision": 90 / 110, "Recall": 0.9, "F1-Score": 0.86,
+               "ROC-AUC": 0.93, "PR-AUC": 0.9}
+    guide = propensity_utils.metric_guide(metrics, confusion).set_index("Metric")
+    assert "170 of 200" in guide.loc["Accuracy", "Here"]
+    assert "90 of the 110 flagged" in guide.loc["Precision", "Here"]
+    assert "Caught 90 of 100 churners; 10 left" in guide.loc["Recall", "Here"]
+    assert "93%" in guide.loc["ROC-AUC", "Here"]
+
+
+def test_parameter_table_explains_every_tuning_knob():
+    for name in propensity_utils.MODEL_SPECS:
+        table = propensity_utils.parameter_table(name)
+        assert list(table["Parameter"]) == list(propensity_utils.MODEL_SPECS[name]["grid"])
+        assert table["What it does"].str.len().min() > 20
+    for sweep in propensity_utils.VALIDATION_SWEEPS.values():
+        assert sweep["param"] in propensity_utils.PARAMETER_GUIDE
+        assert sweep["simpler"] in ("lower", "higher")
+
+
+def test_score_and_threshold_readings_use_the_data():
+    y = np.array([0, 0, 0, 1, 1, 1])
+    probs = np.array([0.1, 0.2, 0.75, 0.5, 0.8, 0.9])
+    segments = propensity_utils.risk_segments(probs, y, low=0.4, high=0.7)
+    text = propensity_utils.score_histogram_reading(segments, 0.7)
+    assert "**3** customers score 0.70 or more" in text and "**67%**" in text
+    sweep = propensity_utils.threshold_sweep(y, probs)
+    text = propensity_utils.threshold_reading(sweep)
+    assert "At **0.30**" in text and "F1 peaks at" in text
+    # Scores piled up near 0 and 1: a higher cut-off only loses churners.
+    certain = propensity_utils.threshold_sweep(np.array([0, 0, 1, 1, 1]), np.array([0.01, 0.02, 0.5, 0.97, 0.99]))
+    assert "precision barely moves" in propensity_utils.threshold_reading(certain)
+
+
 def test_flat_validation_curve_is_recognised():
     flat = pd.DataFrame({"value": [0.01, 1, 100], "validation_mean": [0.8881, 0.8885, 0.8879]})
     peaked = pd.DataFrame({"value": [1, 5, 10], "validation_mean": [0.80, 0.90, 0.85]})

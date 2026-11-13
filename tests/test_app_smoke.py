@@ -170,9 +170,11 @@ def test_propensity_page_fits_a_model_at_the_smallest_sample():
     assert not at.exception
     # The Models tab fits on load, so the metric row must already be there.
     assert any(m.label == "ROC-AUC" for m in at.metric)
-    # The page states which data it is running on: the real CSVs or the fallback.
-    banners = list(at.success) + list(at.warning)
-    assert any("Kaggle churn dataset" in b.value or "synthetic" in b.value for b in banners)
+    # The data is described by what it is, not where it comes from.
+    assert any("customers" in c.value and "churned" in c.value for c in at.caption)
+    assert not any("Kaggle" in w.value for w in at.warning)
+    # Every metric is explained in customers, not just shown as a number.
+    assert any("Question it answers" in d.value.columns for d in at.dataframe)
 
 
 def test_propensity_page_cross_validation_and_tuning_run():

@@ -131,14 +131,10 @@ with control:
     )
 with status:
     churn_df, data_source = cached_churn(sample_size)
-    if data_source == "kaggle":
-        st.success(f"Kaggle churn dataset — {len(churn_df):,} customers sampled from the sibling `predictions/` repo.")
-    else:
-        st.warning(
-            "The Kaggle CSVs were not found in `predictions/data/churn/`, so this lesson is running on a "
-            "**synthetic** customer base with the same columns and a planted signal. Everything still works; "
-            "the numbers are simulated."
-        )
+    st.caption(
+        f"A subscription business with **{len(churn_df):,} customers** — one row each: who they are, how "
+        f"they use the service, what they pay — and whether they churned ({churn_df['Churn'].mean():.0%} did)."
+    )
 
 split = cached_split(sample_size)
 
@@ -296,7 +292,7 @@ with tab_windows:
           on those and you get a model with a beautiful ROC-AUC that predicts nothing you
           can still act on.
 
-        This Kaggle table is already aggregated to one row per customer, so the windows are
+        This table is already aggregated to one row per customer, so the windows are
         baked in rather than something we can slide. Naming them is still the first task on
         real data, not an afterthought.
         """
@@ -321,7 +317,7 @@ with tab_data:
 
     st.markdown(
         """
-        Good features beat clever algorithms. They come from different worlds and this
+        **Good features beat clever algorithms.** They come from different worlds and this
         dataset has all three: **socio-demographic** (Age, Gender), **behavioural**
         (Usage Frequency, Support Calls, Last Interaction) and **commercial**
         (Total Spend, Subscription Type, Contract Length).
@@ -392,17 +388,20 @@ with tab_models:
     for column, (metric, value) in zip(metric_cols, fitted["metrics"].items()):
         column.metric(metric, f"{value:.3f}")
 
-    majority_share = max(float(split["y_test"].mean()), 1 - float(split["y_test"].mean()))
-    st.caption(
-        "Accuracy alone is a trap here: with a majority class this large, always predicting "
-        f"that one class already scores {majority_share:.0%}."
-    )
+    confusion = P.confusion_frame(split["y_test"], fitted["predictions"])
+    with st.expander("📖 What the six numbers mean — in customers", expanded=True):
+        st.dataframe(P.metric_guide(fitted["metrics"], confusion), width="stretch", hide_index=True)
+        majority_share = max(float(split["y_test"].mean()), 1 - float(split["y_test"].mean()))
+        st.caption(
+            "Accuracy alone is a trap: always predicting the larger group already scores "
+            f"{majority_share:.0%} here. The first four use a cut-off of 0.5 (\"churn\" if the score is "
+            "above it); ROC-AUC and PR-AUC judge the scores at every cut-off at once."
+        )
 
     left, right = st.columns(2)
 
     with left:
         st.markdown("**Confusion matrix** — where the errors actually are")
-        confusion = P.confusion_frame(split["y_test"], fitted["predictions"])
         fig_cm = px.imshow(
             confusion,
             text_auto=True,
@@ -415,6 +414,8 @@ with tab_models:
         false_positives = int(confusion.iloc[0, 1])
         false_negatives = int(confusion.iloc[1, 0])
         st.caption(
+            "**How to read it:** rows are what really happened, columns what the model predicted. The "
+            "diagonal (top-left, bottom-right) is right; the other two cells are the two kinds of mistake: "
             f"{false_positives:,} false alarms (retention budget spent on customers who would have stayed) "
             f"vs {false_negatives:,} missed churners (customers lost). Which error is more expensive is a "
             "business question, not a modelling one."
@@ -455,8 +456,11 @@ with tab_models:
         )
         st.plotly_chart(fig_pr, width="stretch")
         st.caption(
-            "The dotted line is the chance level: for PR that is the share of churners, "
-            "so a PR curve is only impressive relative to it."
+            "**How to read them:** every point on a curve is one cut-off. **ROC:** going up = catching more "
+            "churners, going right = falsely flagging more stayers; a curve hugging the top-left corner is "
+            "great, the dotted diagonal is a coin flip. **Precision-Recall:** going right = catching more "
+            "churners, and the curve shows how much precision that costs; the dotted line is random "
+            "guessing (the share of churners), so the curve is only impressive well above it."
         )
 
     st.markdown("**All three side by side** (same split, same threshold)")
@@ -537,7 +541,7 @@ with tab_tuning:
         tune_cols[1].markdown(f"**GridSearchCV** — the whole grid ({total_grid} candidates)")
         st.caption(f"{total_grid} candidates × {tune_cv} folds = **{total_grid * tune_cv} model fits**.")
 
-    st.code(repr(spec["grid"]), language="python")
+    st.dataframe(P.parameter_table(tune_name), width="stretch", hide_index=True)
 
     if st.button("🎛️ Search"):
         X_fit = split["X_train"]
@@ -571,10 +575,21 @@ with tab_curves:
     st.subheader("Two diagnostics, two different questions")
     st.markdown(
         """
-        | Curve | Question | Reading |
+        - **Learning curve** — *would more data help?* The model is retrained on more and more customers.
+        - **Validation curve** — *which setting of one knob is best?* The model is retrained at each value.
+
+        Both draw two lines: **training** (scores on the customers it learned from) and **validation**
+        (scores on customers held back). Only validation tells you how it will do on new customers.
+        The shaded band around each line is the spread across the cross-validation folds (± one
+        standard deviation): a narrow band means the score is stable, a wide one that it depends on
+        which customers happen to land in the sample.
+
+        | What you see | What it means | What to do |
         |---|---|---|
-        | **Learning curve** | Would *more data* help? | both low and together → underfitting · train high, validation low → overfitting · converging high → healthy |
-        | **Validation curve** | How does *one hyperparameter* change things? | find where validation peaks, before it starts to fall |
+        | Training far above validation | **Overfitting** — it memorises | Simplify: e.g. lower `C`, shallower trees, larger `alpha`; more data |
+        | Both low, close together | **Underfitting** — too simple | More flexible model or better features; more data won't help |
+        | Close together, but below a better model | **High bias** | Switch to the more flexible model |
+        | Close together and high | **Healthy** | Nothing — use it |
         """
     )
 
@@ -614,7 +629,7 @@ with tab_curves:
         c3.metric("Gap", f"{gap:+.4f}", help="A large positive gap is the signature of overfitting.")
         best_model_score = max(cached_fit(m, sample_size)["metrics"]["ROC-AUC"] for m in P.MODEL_SPECS)
         kind, message = P.diagnose_learning_curve(
-            learning["train_mean"].iloc[-1], learning["validation_mean"].iloc[-1], best_model_score
+            learning["train_mean"].iloc[-1], learning["validation_mean"].iloc[-1], best_model_score, name
         )
         (st.success if kind == "healthy" else st.warning)(message)
         st.caption(f"Yardstick: the best of the three model families scores {best_model_score:.3f} ROC-AUC on the test set.")
@@ -640,7 +655,7 @@ with tab_curves:
                 f"`{sweep['param']}` barely matters on this data, so \"best = {best_value}\" is noise, not a finding."
             )
         else:
-            st.info(f"{sweep['reads']}  \nBest validation score at **{sweep['param']} = {best_value}**.")
+            st.info(f"{sweep['reads']}  \n{P.validation_curve_reading(validation, sweep)}")
     else:
         st.info("Pick a model and click **📈 Draw both curves** — this refits it several times, so it takes a moment.")
 
@@ -684,6 +699,7 @@ with tab_scores:
     fig_scores.add_vline(x=high_cut, line_dash="dash", annotation_text="Medium | High")
     fig_scores.update_layout(height=430)
     st.plotly_chart(fig_scores, width="stretch")
+    st.caption(P.score_histogram_reading(segments, high_cut) + " The dashed lines are your two cut-offs.")
 
     st.dataframe(
         summary.style.format(
@@ -699,7 +715,7 @@ with tab_scores:
     if data_source == "kaggle":
         st.warning(
             "**A word on this dataset.** The two colours separate almost perfectly — that says more "
-            "about the Kaggle data than about churn modelling. Single thresholds nearly decide the "
+            "about this dataset than about churn modelling. Single thresholds nearly decide the "
             "label: more than 5 support calls, more than 20 days of payment delay, under 500 total "
             "spend or a monthly contract each come with a churn rate around 90%. Real churn data "
             "overlaps far more — expect ROC-AUC around 0.7–0.8, not 0.95, and a much fuller "
@@ -717,10 +733,7 @@ with tab_scores:
     )
     fig_sweep.update_layout(height=380)
     st.plotly_chart(fig_sweep, width="stretch")
-    st.caption(
-        "Raise the threshold and precision rises while recall falls: fewer wasted offers, more customers "
-        "lost. Lower it and the trade goes the other way."
-    )
+    st.markdown(P.threshold_reading(sweep))
 
     st.markdown("**What drives the prediction?**")
     importance = P.feature_importance(scored["model"], split["feature_names"])
@@ -739,6 +752,13 @@ with tab_scores:
         )
         fig_imp.update_layout(height=420)
         st.plotly_chart(fig_imp, width="stretch")
+        st.caption(
+            "**How to read it:** longer bar = the feature matters more to this model. "
+            + ("For logistic regression the bar is the size of the feature's effect (features are scaled, "
+               "so they compare fairly); it says nothing about direction." if importance["kind"].iloc[0] == "|coefficient|"
+               else "For XGBoost it is how much the feature improved the trees' splits — useful for ranking, "
+               "but not the size or direction of an effect.")
+        )
 
     st.markdown(
         """
