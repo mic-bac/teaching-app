@@ -66,3 +66,14 @@ def test_siblings_are_git_ignored_so_they_never_land_in_this_repo():
     for name in manifest()["siblings"]:
         assert f"/{name}/" in ignored
         assert f"/{name}/" in docker_ignored  # the container fetches, never copies a local checkout
+
+
+def test_ci_tests_every_branch_but_deploys_only_from_main():
+    """The pipeline must test both branches against matching siblings and deploy only main."""
+    workflow = (ROOT / ".github" / "workflows" / "ci-cd.yml").read_text()
+    assert "branches: [develop, main]" in workflow
+    assert "scripts/siblings.py fetch" in workflow  # CI uses the same sibling rule as the deployment
+    assert "SIBLING_BRANCH: ${{ github.base_ref || github.ref_name }}" in workflow
+    deploy = workflow[workflow.index("  deploy:"):]
+    assert "needs: [test, docker]" in deploy
+    assert "if: github.event_name == 'push' && github.ref == 'refs/heads/main'" in deploy

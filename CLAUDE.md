@@ -128,7 +128,7 @@ and the name `src` would otherwise collide with `segmentation/src`).
 
 ## Testing (required for every change)
 
-- Run with `make test` / `uv run pytest`. All tests must stay green (202 as of 2026-11-13).
+- Run with `make test` / `uv run pytest`. All tests must stay green (203 as of 2026-11-13).
 - **`tests/test_sibling_alignment.py`** — drift guard: sibling hyperparameters are regex-read and
   compared with the app. Parameter differences for live-demo runtime are fine but must be
   recorded there as `"intentional"`; logic differences are not.
@@ -161,8 +161,13 @@ and the name `src` would otherwise collide with `segmentation/src`).
 - Locally, keep each sibling checked out on the branch matching the app's — check with
   `make siblings-status`.
 - Railway builds the `Dockerfile`; `scripts/start.sh` clones the siblings **at container
-  start** on the matching branch (from `$RAILWAY_GIT_BRANCH`, override `SIBLING_BRANCH`), plus
+  start** on the matching branch (`SIBLING_BRANCH`, else `$RAILWAY_GIT_BRANCH`, else `main`), plus
   public data. A sibling-only change therefore needs just a redeploy, no app commit.
+- **CI/CD** (`.github/workflows/ci-cd.yml`): every push/PR to `develop`/`main` runs the tests
+  against freshly cloned siblings (PR → the target branch's siblings), then builds and
+  health-checks the Docker image; only a push to `main` deploys, via `railway up` (secret
+  `RAILWAY_TOKEN`, variable `RAILWAY_SERVICE`, GitHub environment `production`). Railway's own
+  GitHub auto-deploy must stay off. CI has no Kaggle data, so the synthetic fallbacks are tested too.
 - On Railway, Kaggle datasets are absent → every page needs a synthetic fallback. A new
   sibling the app reads from must be added to `siblings.toml`.
 - Importing a sibling module: use `utils.teaching.load_sibling_module(repo, "src/x.py")` —

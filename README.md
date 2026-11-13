@@ -79,10 +79,34 @@ falls back to a local SQLite database, so `make install && make run` works on it
 | `make lock` / `make export-reqs` | Refresh `uv.lock` / regenerate `requirements.txt` |
 | `make clean` | Remove the virtualenv and Python caches |
 
+## CI/CD (GitHub Actions)
+
+`.github/workflows/ci-cd.yml` runs on every push and pull request to `develop` and `main`:
+
+| Job | What it does | When |
+|---|---|---|
+| **Tests** | clones the siblings on the matching branch (`scripts/siblings.py`), `uv sync --frozen`, `pytest` | always |
+| **Build & start the deployment image** | builds the `Dockerfile`, starts the container, waits for `/_stcore/health` | after Tests pass |
+| **Deploy to Railway** | `railway up` with the Railway CLI | only on a push to `main` (a merged PR), after both jobs pass |
+
+A PR into `main` is tested against the siblings' `main` branches, so a forgotten sibling
+`develop → main` merge fails here, before anything is deployed. CI has no Kaggle data, the same
+as Railway, so it also proves that every page's synthetic fallback works.
+
+**One-time setup** for the deploy job:
+1. GitHub → *Settings → Environments* → create **`production`** (optionally require your
+   approval before each deploy).
+2. In that environment add the secret **`RAILWAY_TOKEN`** (a Railway *project token* for the
+   production environment) and the variable **`RAILWAY_SERVICE`** (the service name or ID).
+3. In Railway, turn **off** the service's own GitHub auto-deploy, otherwise every merge is
+   deployed twice — once untested.
+4. In Railway, set the service variable **`SIBLING_BRANCH=main`**: a CLI deploy has no
+   `$RAILWAY_GIT_BRANCH`, so this states the branch explicitly (it would fall back to `main` anyway).
+
 ## Deployment (Railway)
 
-The repo ships a `Dockerfile` and `railway.json`; connect the GitHub repo in Railway and it
-builds the image (Railway injects `$PORT`, health check on `/_stcore/health`).
+The repo ships a `Dockerfile` and `railway.json`; Railway builds the image (it injects
+`$PORT`; health check on `/_stcore/health`). Deploys come from the CI/CD workflow above.
 
 The sibling lesson repos are **not** part of this repo. The container clones them **when it
 starts**, on the branch matching the app's (`siblings.toml`):
@@ -95,7 +119,7 @@ starts**, on the branch matching the app's (`siblings.toml`):
 
 Siblings are maintained first, so a restart/redeploy simply runs their latest commit on that
 branch — a sibling-only change needs no app commit, just a redeploy. The branch comes from
-Railway's `$RAILWAY_GIT_BRANCH` (override with a `SIBLING_BRANCH` service variable). Public
+the `SIBLING_BRANCH` service variable, else Railway's `$RAILWAY_GIT_BRANCH` (set only for GitHub-triggered deploys), else `main`. Public
 datasets listed in `siblings.toml` are downloaded too (MovieLens from GroupLens); Kaggle-only
 datasets are not — those lessons fall back to synthetic data and say so on screen. PostgreSQL
 is not provisioned; the Database page uses its SQLite fallback.
@@ -117,6 +141,7 @@ uv.lock                     # Pinned, reproducible resolution
 .python-version             # Pins the interpreter to 3.13
 requirements.txt            # Exported from the lock (pip/deploy fallback)
 Dockerfile, railway.json    # Deployment image + Railway config
+.github/workflows/ci-cd.yml # CI/CD: tests -> image health check -> Railway deploy (main only)
 scripts/start.sh            # Container start: fetch siblings for this branch, then serve
 siblings.toml               # Sibling repos, branch rule (develop↔develop, main↔main), public data
 scripts/siblings.py         # fetch / data / status for the siblings (stdlib only)
