@@ -31,8 +31,10 @@ one interactive tool:
 - **📈 Time Series** — *is this series forecastable at all?* A suitability report before any
   model, decomposition and the trend that disappears once sales are deflated by CPI,
   stationarity (ADF) and ACF/PACF, splitting by time and the four error measures (with the
-  lecture's own Excel smoothing example, reproduced by the real code), baselines,
-  Holt-Winters and SARIMA, rolling-origin cross-validation — and why Christmas cannot be
+  lecture's own Excel smoothing example, reproduced by the real code), baselines (incl. "same
+  week last year × growth"), Holt-Winters and what it learned (level, trend, season), SARIMA,
+  rolling-origin cross-validation of every model, a forecast band read off past errors,
+  *reading the misses* against the calendar (Easter moved) — and why Christmas cannot be
   tested with 2.75 seasons of history.
 - **🔮 Forecasting** — *are Prophet and XGBoost worth it here?* Prophet's explainable parts
   (trend, season, holidays) and the setting that makes forecasts overshoot; XGBoost losing on

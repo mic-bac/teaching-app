@@ -291,10 +291,19 @@ def test_time_series_page_reproduces_the_slide_and_fits_sarima():
     shown = [(m.label, m.value) for m in at.metric]
     # The lecture's Excel example (slides 70/78), reproduced by the real code.
     assert ("RMSE", "13.60") in shown and ("MSE", "184.89") in shown
+    # No data-source banner; a neutral caption instead.
+    assert not any("Walmart" in w.value for w in at.warning)
+    texts = " ".join(m.value for m in at.markdown)
+    # The explanations: growth arithmetic, what Holt-Winters learned, the misses, the band.
+    assert "growth =" in texts and "**Level**" in texts
+    assert "Easter" in texts and "How far off to expect" in texts
+    assert any("Recommendation" in s.value for s in at.success)
     sarima = next(b for b in at.button if "SARIMA" in b.label)
     sarima.click().run()
     assert not at.exception
     assert "SARIMA MAPE" in [m.label for m in at.metric]
+    at = at.radio(key="miss_model").set_value("Holt-Winters").run()
+    assert not at.exception
 
 
 def test_forecasting_page_runs_every_experiment():

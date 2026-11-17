@@ -14,8 +14,8 @@ Christmas problem.
 All logic lives in ``utils/forecasting_utils`` (UI-free), which imports the
 sibling's own ``predictions/src`` package — the code shown here is the code the
 lesson script runs. Graceful behaviour: if the sibling is missing the page says
-so; if the Walmart CSVs are missing, the sibling falls back to synthetic sales
-and the header says that instead.
+so; if the sales CSVs are missing, the sibling falls back to synthetic sales
+with the same structure and the page works unchanged.
 """
 
 import time
@@ -82,11 +82,12 @@ def cached_control() -> pd.Series:
     return F.load_control_series()
 
 
-@st.cache_data(show_spinner=False)
-def cached_ets(train: pd.Series, horizon: int) -> tuple[pd.Series, float]:
+@st.cache_resource(show_spinner=False)
+def cached_ets(train: pd.Series, horizon: int) -> tuple[object, pd.Series, float]:
+    """Resource cache: the fitted statsmodels result is kept as is (not pickled)."""
     start = time.perf_counter()
-    _, forecast = F.fit_ets(train, horizon)
-    return forecast, time.perf_counter() - start
+    fitted, forecast = F.fit_ets(train, horizon)
+    return fitted, forecast, time.perf_counter() - start
 
 
 @st.cache_data(show_spinner=False)
@@ -97,12 +98,12 @@ def cached_sarima(train: pd.Series, horizon: int) -> tuple[pd.Series, float]:
 
 
 @st.cache_data(show_spinner="Cross-validating three folds…")
-def cached_cv(series: pd.Series) -> pd.DataFrame:
-    return F.cross_validate(series)
+def cached_cv(series: pd.Series, include_sarima: bool = False) -> dict:
+    return F.cross_validate(series, include_sarima=include_sarima)
 
 
 data = cached_chain()
-sales, cpi, source = data["sales"], data["cpi"], data["source"]
+sales, cpi = data["sales"], data["cpi"]
 report = cached_report(sales)
 train, test = F.split_series(sales, test_weeks=F.TEST_WEEKS)
 
@@ -129,17 +130,10 @@ with st.container(border=True):
         *unusually* low. Every one of those starts with the questions on this page.
         """
     )
-if source == "walmart":
-    st.success(
-        f"Walmart weekly sales — {len(sales)} weeks ({sales.index[0].date()} to "
-        f"{sales.index[-1].date()}), all 45 stores summed into one chain total."
-    )
-else:
-    st.warning(
-        "The Walmart CSVs were not found in `predictions/data/sales/`, so the sibling generated "
-        "**synthetic** sales with the same schema and the same measured dynamics (strong yearly "
-        "season, no trend, a CPI drift). The lesson works the same way; the numbers are simulated."
-    )
+st.caption(
+    f"**The data:** weekly sales of a retail chain, all stores summed into one number per week — "
+    f"{len(sales)} weeks from {sales.index[0].date()} to {sales.index[-1].date()}."
+)
 
 tab_overview, tab_parts, tab_stat, tab_split, tab_models, tab_cv, tab_compare = st.tabs(
     [
@@ -181,9 +175,19 @@ with tab_overview:
     c[4].metric("Stationary (ADF)", "yes" if report["stationary"] else "no",
                 f"p = {report['adf_p_value']:.1e}", delta_color="off", delta_arrow="off")
 
+    readings = F.report_readings(report)
+    st.markdown(
+        f"""
+- **Regular grid** — {readings['grid']}
+- **Seasonal cycles** — {readings['cycles']} A model that learns "week 47 is big" has very few examples of week 47.
+- **Trend** — {readings['trend']}
+- **Seasonal strength** — {readings['season']}
+- **Stationary** — {readings['stationary']}
+"""
+    )
     st.caption(
         "Reading a **p-value**: roughly, *how easily could this pattern be pure chance?* Below 0.05 we "
-        "treat it as real. The trend's p = 0.70 means: easily — so there is no trend to plan with."
+        "treat it as real."
     )
     control = cached_control()
     control_report = cached_report(control)
@@ -244,6 +248,19 @@ with tab_parts:
         c[0].metric("Seasonal swing (peak–trough)", f"{seasonal_swing:,.0f}")
         c[1].metric("Trend swing over 2.7 years", f"{trend_swing:,.0f}")
         c[2].metric("Season vs trend", f"{seasonal_swing / trend_swing:.1f}×")
+        peak = parts.loc[parts["seasonal"].idxmax()]
+        trough = parts.loc[parts["seasonal"].idxmin()]
+        st.markdown(
+            f"**Reading:** the seasonal part says how far a week sits above or below normal. The biggest "
+            f"week of the year (around {peak['Date'].strftime('%d %B')}) adds **{F.money(peak['seasonal'])}** "
+            f"to a normal week; the quietest (around {trough['Date'].strftime('%d %B')}) is "
+            f"**{F.money(trough['seasonal'])}**. The trend, by contrast, moved only {F.money(trend_swing)} "
+            f"in total over 2.7 years — the season moves this business {seasonal_swing / trend_swing:.0f}× "
+            "more than the trend does."
+        )
+    else:
+        st.caption("Multiplicative: the seasonal part is a factor (1.25 = 25% above a normal week) "
+                   "instead of an amount in euros. Switch to additive to see it in money.")
     show_source(F.decompose, "🐍 Decomposition")
 
     st.divider()
@@ -420,7 +437,17 @@ with tab_split:
 | **MAPE** | series of different sizes must be comparable — but it divides by the actual value, so it breaks on series near zero (Forecasting page) |
 """
     )
-    st.caption("Scored here: the seasonal-naive forecast of the held-out quarter.")
+    st.markdown(
+        f"""
+**Reading** (the seasonal-naive forecast of the held-out quarter, a typical week ≈ {F.money(test.mean())}):
+- **MAE {F.money(example['MAE'])}** — on average the forecast misses a week by that much.
+- **RMSE {F.money(example['RMSE'])}** — larger than the MAE, because squaring gives the few big misses
+  more weight. The bigger the gap between the two, the more the error comes from a handful of bad weeks.
+- **MAPE {example['MAPE']:.2f}%** — the same miss as a share of the week: {F.mape_in_money(example['MAPE'], test)}.
+- **R² {example['R2']:.2f}** — the forecast explains {max(example['R2'], 0):.0%} of the up-and-down *within* this
+  quarter. Low-looking, because a quiet quarter has little up-and-down to explain; judge forecasts by MAE/MAPE.
+"""
+    )
     show_source(F.forecast_metrics, "🐍 MAE, MSE, RMSE, MAPE, R²")
 
 # ===========================================================================
@@ -429,16 +456,37 @@ with tab_split:
 with tab_models:
     st.subheader("Baselines — the bar every model has to clear")
     baselines = F.baseline_forecasts(train, len(test))
+    baseline_scores = {name: F.forecast_metrics(test, p)["MAPE"] for name, p in baselines.items()}
     st.dataframe(
-        pd.DataFrame([{"baseline": name, "MAPE": F.forecast_metrics(test, p)["MAPE"]} for name, p in baselines.items()])
+        pd.DataFrame([{"baseline": name, "MAPE": mape} for name, mape in baseline_scores.items()])
         .style.format({"MAPE": "{:.2f}%"}),
         width="stretch", hide_index=True,
     )
     st.caption(
-        "Same data, zero parameters. The gap between *naive* and *seasonal naive* is the value of knowing "
-        "about seasonality — and nothing else. A model reported without this comparison is unevaluated."
+        f"Same data, no fitting. *Naive* repeats last week ({baseline_scores['naive (last value)']:.2f}%); "
+        f"*seasonal naive* repeats the same week last year ({baseline_scores['seasonal naive (t-52)']:.2f}%). "
+        "The gap between them is the value of knowing about seasonality — and nothing else. A model "
+        "reported without this comparison is unevaluated."
     )
     show_source(F.seasonal_naive_forecast, "🐍 The seasonal-naive baseline")
+
+    growth = F.growth_example(train)
+    with st.container(border=True):
+        st.markdown(
+            f"""
+**One number makes the baseline better: growth.** "Same week last year" also copies last year's
+*level*. If this year runs higher, every copied week comes out too low. So:
+
+1. The last {growth['window']} weeks sold **{F.money(growth['recent'])}**; the same weeks a year earlier
+   **{F.money(growth['year_before'])}** → growth = **{growth['growth']:.3f}** ({100 * (growth['growth'] - 1):+.1f}%).
+2. First forecast week: the same week last year ({growth['copied_week'].date()}) sold {F.money(growth['copied'])}
+   → × {growth['growth']:.3f} = **{F.money(growth['forecast'])}**.
+
+Result: {baseline_scores['seasonal naive (t-52)']:.2f}% → **{baseline_scores[F.GROWTH_LABEL]:.2f}%** MAPE,
+with still nothing fitted. Keep this idea in mind — it is what Holt-Winters' *level* does automatically.
+"""
+        )
+    show_source(F.seasonal_naive_growth_forecast, "🐍 Same week last year × growth")
 
     st.divider()
     st.subheader("Exponential smoothing — and why α barely matters here")
@@ -452,28 +500,84 @@ with tab_models:
     )
 
     st.divider()
-    st.subheader("Holt-Winters and SARIMA")
-    ets_forecast, ets_seconds = cached_ets(train, len(test))
+    st.subheader("Holt-Winters — and what it learned")
+    ets_model, ets_forecast, ets_seconds = cached_ets(train, len(test))
+    ets_mape = F.forecast_metrics(test, ets_forecast.values)["MAPE"]
+    hw = F.holt_winters_parts(ets_model)
     st.markdown(
-        f"**Holt-Winters (ETS)** — level, trend and season, each smoothed: MAPE "
-        f"**{F.forecast_metrics(test, ets_forecast.values)['MAPE']:.2f}%**, fitted in {ets_seconds:.2f}s."
+        f"**Holt-Winters (ETS)** keeps three running estimates and updates each one every week: "
+        f"MAPE **{ets_mape:.2f}%**, fitted in {ets_seconds:.2f}s — {F.mape_in_money(ets_mape, test)}."
     )
+    parts_frame = hw["parts"]
+    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+                        subplot_titles=("Level — where sales are now", "Trend — change per week",
+                                        "Season — this week vs a normal week"))
+    for row, (column, colour) in enumerate([("level", BLUE), ("trend", ORANGE), ("season", GREEN)], start=1):
+        fig.add_trace(go.Scatter(x=parts_frame.index, y=parts_frame[column], mode="lines",
+                                 line=dict(color=colour), showlegend=False), row=row, col=1)
+    fig.update_layout(height=560, margin=dict(t=40))
+    st.plotly_chart(fig, width="stretch")
+    c = st.columns(3)
+    c[0].metric("α — level weight", f"{hw['alpha']:.2f}", f"level now {F.money(hw['last_level'])}",
+                delta_color="off", delta_arrow="off")
+    c[1].metric("β — trend weight", f"{hw['beta']:.2f}",
+                f"{F.money(hw['trend_per_week'])}/week = {hw['trend_pct_per_year']:+.1f}%/year",
+                delta_color="off", delta_arrow="off")
+    c[2].metric("γ — season weight", f"{hw['gamma']:.2f}", "how fast the season adapts",
+                delta_color="off", delta_arrow="off")
+    st.markdown(
+        f"""
+**Reading.** Each weight says how strongly the newest week changes the estimate: 1 = forget the past,
+close to 0 = change your mind slowly. All three are small — right for a series this regular.
+- **Level** ≈ {F.money(hw['last_level'])} a week: this is how the model lifts last year's season to this
+  year's sales — the growth factor above, done continuously.
+- **Trend** {F.money(hw['trend_per_week'])} a week ({hw['trend_pct_per_year']:+.1f}% a year): small, in line with
+  the suitability report's *no clear trend* ({report['trend_pct_per_year']:+.2f}%/year, p = {report['trend_p_value']:.2f}).
+- **Season**: the same shape as the decomposition — the Christmas peak, the January dip.
+"""
+    )
+    with st.expander("🔎 The maths, if you're curious"):
+        st.markdown(
+            r"""
+Three smoothing equations, each the same idea as simple exponential smoothing
+(new estimate = weight × what just happened + (1 − weight) × what we believed):
+
+$$\ell_t = \alpha\,(y_t - s_{t-52}) + (1-\alpha)(\ell_{t-1} + b_{t-1})$$
+$$b_t = \beta\,(\ell_t - \ell_{t-1}) + (1-\beta)\,b_{t-1}$$
+$$s_t = \gamma\,(y_t - \ell_t) + (1-\gamma)\,s_{t-52}$$
+
+Forecast $h$ weeks ahead: $\hat y_{t+h} = \ell_t + h\,b_t + s_{t+h-52}$.
+"""
+        )
+    show_source(F.fit_ets, "🐍 Holt-Winters")
+    show_source(F.holt_winters_parts, "🐍 What Holt-Winters learned")
+
+    st.divider()
+    st.subheader("SARIMA")
     st.markdown(
         f"**{F.sarima_label()}** combines three ideas: learn from the *last few weeks*, learn from "
         "*its own recent mistakes*, and compare with *the same week last year*. The numbers in brackets are "
-        "simply its settings. Looking back 52 weeks makes it slow — part of the lesson."
+        "its settings; the seasonal part (0,1,1,52) means \"work with the change against the same week last "
+        "year\" — which is very close to what the seasonal-naive baseline does. Looking back 52 weeks makes "
+        "it slow — part of the lesson."
     )
-    if st.button("🧮 Fit SARIMA (takes ~20 s)") or "sarima" in st.session_state:
+    if st.button("🧮 Fit SARIMA (takes ~15 s)") or "sarima" in st.session_state:
         with st.spinner("Fitting SARIMA with 52 seasonal lags…"):
             st.session_state["sarima"] = cached_sarima(train, len(test))
         sarima_forecast, sarima_seconds = st.session_state["sarima"]
+        sarima_mape = F.forecast_metrics(test, sarima_forecast.values)["MAPE"]
         c = st.columns(3)
-        c[0].metric("SARIMA MAPE", f"{F.forecast_metrics(test, sarima_forecast.values)['MAPE']:.2f}%")
+        c[0].metric("SARIMA MAPE", f"{sarima_mape:.2f}%")
         c[1].metric("Fit time", f"{sarima_seconds:.1f}s")
         c[2].metric("vs Holt-Winters", f"{sarima_seconds / max(ets_seconds, 1e-9):.0f}× the compute")
+        st.caption(
+            f"Reading: SARIMA ({sarima_mape:.2f}%) lands between the baseline "
+            f"({baseline_scores['seasonal naive (t-52)']:.2f}%) and Holt-Winters ({ets_mape:.2f}%) on this "
+            "window, for far more compute. One window is one sample — the Cross-Validation tab checks "
+            "whether that holds."
+        )
     else:
-        st.info("Click to fit SARIMA. The comparison tab includes it once fitted.")
-    show_source(F.fit_ets, "🐍 Holt-Winters")
+        st.info("Click to fit SARIMA. The comparison and cross-validation tabs can include it once fitted.")
     show_source(F.fit_sarima, "🐍 SARIMA")
 
 # ===========================================================================
@@ -500,15 +604,31 @@ with tab_cv:
                       yaxis=dict(autorange="reversed"), legend=dict(orientation="h"))
     st.plotly_chart(fig, width="stretch")
 
-    cv = cached_cv(sales)
+    with_sarima = st.toggle("Include SARIMA (adds ~20 s, three more fits)", value=False)
+    cv = cached_cv(sales, include_sarima=with_sarima)
+    scores, cv_models = cv["scores"], cv["models"]
     st.dataframe(
-        cv.style.format({"seasonal naive MAPE": "{:.2f}%", "Holt-Winters MAPE": "{:.2f}%"}),
+        scores.style.format({name: "{:.2f}%" for name in cv_models})
+        .highlight_min(subset=cv_models, axis=1, color="#c8e6c9"),
         width="stretch", hide_index=True,
     )
-    c = st.columns(2)
-    for column, name in zip(c, ["seasonal naive MAPE", "Holt-Winters MAPE"]):
-        column.metric(name.replace(" MAPE", ""), f"mean {cv[name].mean():.2f}%",
-                      f"spread {cv[name].min():.2f}–{cv[name].max():.2f}%", delta_color="off", delta_arrow="off")
+    st.caption("Each row is one fold: train on everything before the window, forecast its 13 weeks. "
+               "Green = the best model in that fold.")
+    long = scores.melt(id_vars=["fold"], value_vars=cv_models, var_name="model", value_name="MAPE")
+    long["fold"] = "fold " + long["fold"].astype(str)
+    fig = px.bar(long, x="fold", y="MAPE", color="model", barmode="group", text_auto=".2f",
+                 color_discrete_map={"seasonal naive": ORANGE, "naive × growth": "#f4b183",
+                                     "Holt-Winters": GREEN, "SARIMA": RED},
+                 labels={"MAPE": "MAPE (%)", "fold": ""})
+    fig.update_layout(height=340, margin=dict(t=10), legend=dict(orientation="h", y=-0.2))
+    st.plotly_chart(fig, width="stretch")
+    for line in F.cv_reading(scores, cv_models):
+        st.markdown(f"- {line}")
+    c = st.columns(len(cv_models))
+    for column, name in zip(c, cv_models):
+        column.metric(name, f"mean {scores[name].mean():.2f}%",
+                      f"spread {scores[name].min():.2f}–{scores[name].max():.2f}%",
+                      delta_color="off", delta_arrow="off")
     show_source(F.rolling_origin_splits, "🐍 Rolling-origin splits")
 
     st.divider()
@@ -545,66 +665,130 @@ the retail year cannot be evaluated with this dataset.**
 # TAB 7 — Comparison
 # ===========================================================================
 with tab_compare:
-    st.subheader("All models, the same 13-week test window")
+    st.subheader("Which forecast to use?")
     results = dict(F.baseline_forecasts(train, len(test)))
     results["Holt-Winters (ETS)"] = ets_forecast.values
     if "sarima" in st.session_state:
         results[F.sarima_label()] = st.session_state["sarima"][0].values
-    else:
-        st.caption("SARIMA is not included yet — fit it on the *Baselines & Models* tab.")
     table = F.metrics_table({name: F.forecast_metrics(test, p) for name, p in results.items()})
+
+    cv_means = scores[cv_models].mean()
+    cv_winner = cv_means.idxmin()
+    st.success(
+        f"**Recommendation: {cv_winner}.** It has the lowest error across all three cross-validation folds "
+        f"(mean {cv_means[cv_winner]:.2f}% vs {cv_means['seasonal naive']:.2f}% for *same week last year*) — "
+        f"{100 * (1 - cv_means[cv_winner] / cv_means['seasonal naive']):.0f}% less error than a forecast that "
+        "costs nothing. The folds matter more than the single window below: one window can be lucky."
+    )
+
+    band = F.cv_interval(cv["errors"]["Holt-Winters"], coverage=0.8)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=train.index[-26:], y=train.values[-26:], mode="lines", name="history (last 26 weeks)",
+                             line=dict(color=GREY)))
+    hw_values = results["Holt-Winters (ETS)"]
+    fig.add_trace(go.Scatter(
+        x=list(test.index) + list(test.index[::-1]),
+        y=list(hw_values * (1 + band / 100)) + list((hw_values * (1 - band / 100))[::-1]),
+        fill="toself", fillcolor="rgba(46, 204, 113, 0.18)", line=dict(width=0), hoverinfo="skip",
+        name=f"Holt-Winters ±{band:.1f}% (8 of 10 past weeks)"))
+    fig.add_trace(go.Scatter(x=test.index, y=test.values, mode="lines+markers", name="actual",
+                             line=dict(color="black", width=3)))
+    palette = {"seasonal naive (t-52)": ORANGE, F.GROWTH_LABEL: "#f4b183", "Holt-Winters (ETS)": GREEN,
+               F.sarima_label(): RED, "naive (last value)": "#9b59b6", "mean of history": "#7f8c8d"}
+    for name, prediction in results.items():
+        fig.add_trace(go.Scatter(x=test.index, y=prediction, mode="lines", name=name,
+                                 line=dict(color=palette.get(name, BLUE), dash="dash"),
+                                 visible=True if name in ("seasonal naive (t-52)", "Holt-Winters (ETS)")
+                                 else "legendonly"))
+    fig.update_layout(height=440, title="<b>Forecasts against the held-out quarter</b> (click the legend to toggle)",
+                      yaxis_title="weekly sales")
+    st.plotly_chart(fig, width="stretch")
+    inside = float(np.mean(np.abs(100 * (test.values - hw_values) / test.values) <= band))
+    st.markdown(
+        f"**How far off to expect.** In the cross-validation folds, 8 of 10 Holt-Winters weeks missed by less "
+        f"than **±{band:.1f}%** — about ±{F.money(band / 100 * test.mean())} on a typical week. That is the "
+        f"green band; in this quarter {inside:.0%} of the actual weeks fall inside it. It is a planning range, "
+        "not a guarantee — and it comes from quiet quarters only, so do not stretch it over Christmas."
+    )
+    show_source(F.cv_interval, "🐍 The band, read off past errors")
+
+    st.markdown("**All models on the single held-out quarter**")
     st.dataframe(
         table.style.format({"MAE": "{:,.0f}", "MSE": "{:.3g}", "RMSE": "{:,.0f}", "MAPE": "{:.2f}%", "R2": "{:.2f}"}),
         width="stretch", hide_index=True,
     )
-    best = table.iloc[0]
-    baseline_mape = table.loc[table.model == "seasonal naive (t-52)", "MAPE"].iloc[0]
-    if best["model"] == "seasonal naive (t-52)":
-        st.info(
-            f"**The baseline won.** Nothing fitted beat *the same week last year* ({baseline_mape:.2f}%). That is a "
-            "result, not a failure: the series is close to purely seasonal, and the honest recommendation is "
-            "the forecast that costs nothing to build or maintain."
-        )
-    else:
-        st.success(
-            f"**{best['model']}** wins at {best['MAPE']:.2f}% against the seasonal-naive baseline's "
-            f"{baseline_mape:.2f}% — a {100 * (1 - best['MAPE'] / baseline_mape):.0f}% reduction in error over a "
-            "forecast with no parameters at all. Real, but keep it in proportion — and remember this is the "
-            "*quiet* window."
-        )
+    if "sarima" not in st.session_state:
+        st.caption("SARIMA is not included yet — fit it on the *Baselines & Models* tab.")
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=train.index[-26:], y=train.values[-26:], mode="lines", name="history (last 26 weeks)",
-                             line=dict(color=GREY)))
-    fig.add_trace(go.Scatter(x=test.index, y=test.values, mode="lines+markers", name="actual",
-                             line=dict(color="black", width=3)))
-    palette = {"seasonal naive (t-52)": ORANGE, "Holt-Winters (ETS)": GREEN, F.sarima_label(): RED,
-               "naive (last value)": "#9b59b6", "mean of history": "#7f8c8d"}
-    for name, prediction in results.items():
-        fig.add_trace(go.Scatter(x=test.index, y=prediction, mode="lines", name=name,
-                                 line=dict(color=palette.get(name, BLUE), dash="dash"),
-                                 visible=True if name in ("seasonal naive (t-52)", "Holt-Winters (ETS)",
-                                                          F.sarima_label()) else "legendonly"))
-    fig.update_layout(height=440, title="<b>Forecasts against the held-out quarter</b> (click the legend to toggle)",
-                      yaxis_title="weekly sales")
+    st.divider()
+    st.subheader("Reading the misses")
+    st.markdown(
+        "A score says *how much* a forecast missed. Explaining it means saying *where* and *why*. Seasonal "
+        "forecasts lean on the same week a year earlier — so put the calendar of both years next to every miss. "
+        "Below: the hardest fold from cross-validation."
+    )
+    events = F.calendar_events(sales.index, F.WALMART_HOLIDAYS)
+    hardest = int(scores.loc[scores[cv_models].mean(axis=1).idxmax(), "fold"])
+    fold = cv["forecasts"][hardest]
+    miss_model = st.radio("Model", ["seasonal naive", "Holt-Winters"], horizontal=True, key="miss_model")
+    misses = F.explain_misses(fold["test"], fold["predictions"][miss_model], events)
+    misses["label"] = misses["event this year"].where(
+        misses["event this year"] != "",
+        misses["same week last year"].str.extract(r"\((.*)\)")[0].map(
+            lambda e: f"last year: {e}" if isinstance(e, str) else ""),
+    )
+    fig = go.Figure(go.Bar(
+        x=[str(w) for w in misses["week"]], y=misses["miss %"], text=misses["label"], textposition="outside",
+        marker_color=[GREEN if m >= 0 else RED for m in misses["miss %"]],
+    ))
+    fig.add_hline(y=0, line_color=GREY)
+    fig.update_layout(height=360, yaxis_title="miss % (+ = forecast too low)", margin=dict(t=20),
+                      title=f"<b>{miss_model}, fold {hardest}</b> — weekly misses with the calendar")
     st.plotly_chart(fig, width="stretch")
-
-    residuals = test.values - results[best["model"]]
-    fig = px.bar(x=test.index, y=residuals, labels={"x": "", "y": "actual − forecast"},
-                 title=f"<b>Residuals — {best['model']}</b> (what the best model still cannot explain)")
-    fig.update_traces(marker_color=[GREEN if r >= 0 else RED for r in residuals])
-    fig.update_layout(height=300)
-    st.plotly_chart(fig, width="stretch")
+    top = F.explain_misses(fold["test"], fold["predictions"][miss_model], events, top=3)
+    st.markdown(f"**Reading:** {F.misses_reading(top)}")
+    easter = F.easter_weeks(sales.index)
+    st.info(
+        f"**Easter moves.** The week before Easter was {', '.join(str(d.date()) for d in easter)}. A forecast "
+        "built on *the same week last year* copies an ordinary week into this year's Easter (too low) and last "
+        "year's Easter peak into an ordinary week (too high). Holt-Winters makes the same two mistakes — it has "
+        "learned *week 14 of the year*, not *the week before Easter*. The fix is a holiday feature that knows "
+        "where Easter falls; Walmart's official holiday list does not include it, so it would have to be added."
+    )
+    st.caption(
+        "The smaller misses are mostly the level: this year runs a little above last year, so copies of last "
+        "year come out slightly low — what the growth factor and Holt-Winters' level correct."
+    )
+    with st.expander("All weeks of this fold, with the calendar"):
+        st.dataframe(
+            misses.drop(columns="label").style.format(
+                {"actual": "{:,.0f}", "forecast": "{:,.0f}", "miss %": "{:+.1f}%"}),
+            width="stretch", hide_index=True,
+        )
+    show_source(F.explain_misses, "🐍 Explaining the misses")
 
     st.divider()
     st.subheader("What the slides say, and what this data shows")
+    if "SARIMA" in cv_models:
+        arima_row = (
+            f"**Holt-Winters wins; SARIMA ≈ the free baseline** — across the folds Holt-Winters averaged "
+            f"{cv_means['Holt-Winters']:.2f}%, SARIMA {cv_means['SARIMA']:.2f}%, *same week last year* "
+            f"{cv_means['seasonal naive']:.2f}%. SARIMA's seasonal difference mostly reproduces the baseline, "
+            "for far more compute."
+        )
+    else:
+        arima_row = (
+            f"**Holt-Winters wins all folds** ({cv_means['Holt-Winters']:.2f}% vs {cv_means['seasonal naive']:.2f}% "
+            "for the baseline). Switch on SARIMA in the Cross-Validation tab to see how close it stays to the "
+            "baseline, for far more compute."
+        )
     st.markdown(
         f"""
 | Slide statement | On this data |
 |---|---|
 | Decomposition into trend, seasonality and residuals | **Holds, with an asterisk** — the split works, but here the "trend" part is just noise. Three parts ≠ three *useful* parts. |
 | Stationarity: constant mean and variance | **Holds** — simply because these sales never had a trend to begin with. |
-| Exponential smoothing, ARIMA as classical models | **Both work, neither clearly wins** — on short, strongly seasonal data they are about equal, and SARIMA takes far longer to fit. |
+| Exponential smoothing, ARIMA as classical models | {arima_row} |
 | MAE, RMSE, MAPE are indispensable | **Holds** — and picking one is a business decision. MAPE can break on small numbers (see the Forecasting page). |
 | Cross-validation for time series: rolling origin, never random k-folds | **Holds** — but you can only test weeks you have enough history for, which is why Christmas stays untested. |
 
@@ -616,9 +800,11 @@ with tab_compare:
 🎯 **What to remember**
 - **Check the data before the model.** Two numbers — how many seasons of history, and whether there
   is a real trend — told us most of what the models would later find.
-- **Always compare against "same week last year".** It costs nothing, and here it is hard to beat.
-- **Know what your test does not cover.** A forecast that looks great on a quiet quarter can still
-  fail at Christmas.
+- **Always compare against "same week last year" — and judge on several folds.** It costs nothing;
+  Holt-Winters beats it here by learning the current *level*, and wins every fold.
+- **Read the misses against the calendar.** The biggest errors had a name — Easter moved — and
+  a forecast you can explain is one a planner can trust. The band says how far off to expect, but
+  not at Christmas, which this data cannot test.
 """
         )
     show_sibling_script("timeseries.py", "📄 The full sibling script: predictions/timeseries.py")

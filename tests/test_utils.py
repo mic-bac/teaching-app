@@ -1376,11 +1376,95 @@ def _toy_weekly(n=143, seed=0):
 
 def test_cross_validation_folds_only_ever_move_forward():
     _needs_predictions()
-    cv = forecasting_utils.cross_validate(_toy_weekly(), n_folds=3, horizon=13)
+    result = forecasting_utils.cross_validate(_toy_weekly(), n_folds=3, horizon=13)
+    cv = result["scores"]
     assert list(cv["fold"]) == [0, 1, 2]
     assert cv["train_weeks"].is_monotonic_increasing
     assert (pd.to_datetime(cv["test_from"]).diff().dropna() > pd.Timedelta(0)).all()
-    assert (cv[["seasonal naive MAPE", "Holt-Winters MAPE"]] > 0).all().all()
+    # SARIMA is opt-in (slow); the three fast forecasts are always there.
+    assert result["models"] == ["seasonal naive", "naive × growth", "Holt-Winters"]
+    assert (cv[result["models"]] > 0).all().all()
+    # One weekly % error per test week per model — the raw material for the band.
+    assert all(len(errors) == 3 * 13 for errors in result["errors"].values())
+    assert len(result["forecasts"]) == 3
+
+
+def test_growth_baseline_is_last_year_times_recent_growth():
+    _needs_predictions()
+    weeks = pd.date_range("2010-01-01", periods=70, freq="7D")
+    # Year two runs exactly 10% above year one, week for week.
+    year_one = 100 + 10 * np.sin(np.arange(52) / 52 * 2 * np.pi)
+    sales = pd.Series(np.r_[year_one, year_one[:18] * 1.1], index=weeks)
+    forecast = forecasting_utils.seasonal_naive_growth_forecast(sales, 5)
+    plain = forecasting_utils.seasonal_naive_forecast(sales, 5)
+    np.testing.assert_allclose(forecast, plain * 1.1)
+    example = forecasting_utils.growth_example(sales)
+    assert example["growth"] == pytest.approx(1.1)
+    assert example["forecast"] == pytest.approx(forecast[0])
+
+
+def test_easter_week_is_the_week_ending_on_good_friday():
+    _needs_predictions()
+    weeks = pd.date_range("2010-02-05", periods=143, freq="7D")  # Fridays, like Walmart's
+    easter = forecasting_utils.easter_weeks(weeks)
+    # Easter Sunday: 4 Apr 2010, 24 Apr 2011, 8 Apr 2012 — the shopping week ends two days earlier.
+    assert [d.date().isoformat() for d in easter] == ["2010-04-02", "2011-04-22", "2012-04-06"]
+
+
+def test_explain_misses_names_the_moved_holiday():
+    _needs_predictions()
+    weeks = pd.date_range("2011-01-07", periods=70, freq="7D")
+    events = pd.Series("", index=weeks)
+    events[weeks[60]] = "Easter"  # this year
+    events[weeks[60 - 52 + 2]] = "Easter"  # last year, two weeks later in the calendar
+    actual = pd.Series(100.0, index=weeks[58:64])
+    forecast = np.full(6, 100.0)
+    forecast[2] = 80.0  # Easter this year, copied from an ordinary week
+    forecast[4] = 120.0  # last year's Easter copied into an ordinary week
+    table = forecasting_utils.explain_misses(actual, forecast, events)
+    assert table.loc[2, "miss %"] == pytest.approx(20.0)
+    assert "this year" in table.loc[2, "why"]
+    assert "last year's Easter" in table.loc[4, "why"]
+    top = forecasting_utils.explain_misses(actual, forecast, events, top=2)
+    assert len(top) == 2 and set(top["week"]) == {weeks[60].date(), weeks[62].date()}
+    reading = forecasting_utils.misses_reading(top)
+    assert "20% too low" in reading and "20% too high" in reading
+
+
+def test_cv_interval_covers_the_requested_share_of_past_misses():
+    _needs_predictions()
+    errors = [-5, -1, 0.5, 1, 2, -2, 3, 1.5, -0.5, 4]
+    band = forecasting_utils.cv_interval(errors, coverage=0.8)
+    assert np.mean(np.abs(errors) <= band) >= 0.8
+    assert band < 5  # the single worst miss stays outside
+
+
+def test_holt_winters_parts_reads_level_trend_and_season():
+    _needs_predictions()
+    fitted, _ = forecasting_utils.fit_ets(_toy_weekly(n=120), 4)
+    parts = forecasting_utils.holt_winters_parts(fitted)
+    assert {"alpha", "beta", "gamma", "last_level", "trend_per_week"} <= set(parts)
+    assert list(parts["parts"].columns) == ["level", "trend", "season"]
+    assert parts["last_level"] == pytest.approx(100, rel=0.1)  # the toy series sits at 100
+    assert abs(parts["trend_pct_per_year"]) < 10  # no trend was planted
+
+
+def test_readings_put_the_numbers_into_words():
+    _needs_predictions()
+    report = forecasting_utils.suitability_report(_toy_weekly())
+    readings = forecasting_utils.report_readings(report)
+    assert set(readings) == {"grid", "cycles", "trend", "season", "stationary"}
+    assert "2.75 years" in readings["cycles"]
+    assert forecasting_utils.money(1_523_442) == "€1.5M"
+    assert forecasting_utils.money(-7_500) == "−€8k"
+    assert "€1.0M" in forecasting_utils.mape_in_money(2.0, pd.Series([50e6, 50e6]))
+    scores = pd.DataFrame({"fold": [0, 1], "test_from": ["a", "b"], "test_to": ["c", "d"],
+                           "seasonal naive": [4.0, 2.0], "Holt-Winters": [3.0, 1.5],
+                           "SARIMA": [4.05, 2.5]})
+    lines = forecasting_utils.cv_reading(scores, ["seasonal naive", "Holt-Winters", "SARIMA"])
+    assert "**Holt-Winters**" in lines[0] and "wins 2 of 2" in lines[0]
+    assert "fold 0" in lines[1]
+    assert "1 of 2 folds" in lines[2]
 
 
 def test_christmas_cannot_be_tested_by_a_seasonal_model():

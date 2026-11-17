@@ -16,7 +16,6 @@ Written for business students: plain language first, maths in collapsed boxes.
 
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -142,12 +141,8 @@ with st.container(border=True):
         thousands of products at once (XGBoost). And the judgement to know when a simple forecast is enough.
         """
     )
-if source == "walmart":
-    st.success(f"Walmart weekly sales — chain total, 45 stores and ~3,000 store departments "
-               f"({sales.index[0].date()} to {sales.index[-1].date()}).")
-else:
-    st.warning("The Walmart CSVs were not found, so the sibling generated **synthetic** sales with the "
-               "same structure. Everything works; the numbers are simulated.")
+st.caption(f"**The data:** weekly sales of a retail chain — chain total, {stores['Store'].nunique()} stores "
+           f"and their departments ({sales.index[0].date()} to {sales.index[-1].date()}).")
 st.caption(f"The bar to beat on the chain total: *same week last year* (seasonal naive) — MAPE "
            f"**{baseline_mape:.2f}%** on the 13 held-out weeks.")
 
