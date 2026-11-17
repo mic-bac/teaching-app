@@ -149,8 +149,10 @@ with tab_see:
     all_boxes = pretrained[pretrained["image"] == key]
     c1, c2 = st.columns([1, 2])
     with c1:
-        st.dataframe(D.threshold_table(all_boxes), hide_index=True, width="stretch")
+        thresholds = D.threshold_table(all_boxes)
+        st.dataframe(thresholds, hide_index=True, width="stretch")
     with c2:
+        st.markdown(D.threshold_reading(thresholds))
         st.markdown(
             """
             **Low threshold:** you find almost everything — plus guesses that are wrong.
@@ -258,6 +260,11 @@ with tab_learn:
     c2.metric("Recall", f"{best['recall']:.0%}", help="Of the real plates, how many it found")
     c3.metric("mAP50", f"{best['mAP50']:.2f}", help="Overall score with a loose box fit (0 to 1)")
     c4.metric("mAP50-95", f"{best['mAP50-95']:.2f}", help="Overall score with a strict box fit (0 to 1)")
+    st.markdown("**In plain numbers:**\n\n" + "\n".join(
+        f"- {line}" for line in D.metrics_in_counts(best, training["val_images"])))
+    st.caption("Precision and recall pull against each other: draw more boxes and you find more plates "
+               "(recall up) but also more false alarms (precision down) — the threshold slider moves along "
+               "exactly this trade-off.")
     st.markdown(
         f"""
         - **Precision** — of the boxes it drew, how many were really spaghetti.
@@ -325,7 +332,9 @@ with tab_compare:
     threshold = st.slider(
         "Minimum confidence", 0.05, 0.95, results["draw_confidence"], 0.05, key="compare_threshold"
     )
-    st.dataframe(D.compare_models(results, "spaghetti", threshold), hide_index=True, width="stretch")
+    comparison = D.compare_models(results, "spaghetti", threshold)
+    st.dataframe(comparison, hide_index=True, width="stretch")
+    st.markdown(D.compare_reading(comparison))
     key = st.selectbox(
         "Look at one photo", D.images_for(results, "fine_tuned", "spaghetti"),
         format_func=photo_name, key="compare_photo",

@@ -1449,6 +1449,33 @@ def test_holt_winters_parts_reads_level_trend_and_season():
     assert abs(parts["trend_pct_per_year"]) < 10  # no trend was planted
 
 
+def test_with_easter_adds_one_row_per_year_including_the_future():
+    _needs_predictions()
+    holidays = pd.DataFrame({"holiday": ["Superbowl"], "ds": [pd.Timestamp("2011-02-11")],
+                             "lower_window": [-3], "upper_window": [2]})
+    calendar = forecasting_utils.with_easter(holidays, "2010-02-05", "2013-12-31")
+    easter = calendar[calendar["holiday"] == "Easter"]
+    # 2013 is after the data ends — Prophet must know where *next* Easter falls.
+    assert [d.date().isoformat() for d in easter["ds"]] == [
+        "2010-04-02", "2011-04-22", "2012-04-06", "2013-03-29"]
+    assert len(calendar) == len(easter) + 1  # the original holiday is kept
+
+
+def test_prophet_component_reading_finds_peaks_in_money():
+    _needs_predictions()
+    days = pd.date_range("2011-01-07", periods=6, freq="7D")
+    components = {
+        "trend": pd.DataFrame({"ds": days, "trend": [100.0, 101, 102, 103, 104, 105]}),
+        "yearly": pd.DataFrame({"ds": days, "yearly": [5.0, -8, 2, 20, 0, 1]}),
+        "holidays": pd.DataFrame({"ds": days, "holidays": [0.0, 0, 0, 0, 15, 0]}),
+    }
+    reading = forecasting_utils.prophet_component_reading(components)
+    assert reading["season_peak"] == (days[3], 20.0)
+    assert reading["season_low"] == (days[1], -8.0)
+    assert reading["holiday_peak"] == (days[4], 15.0)
+    assert reading["trend_change"] == pytest.approx(5.0)
+
+
 def test_readings_put_the_numbers_into_words():
     _needs_predictions()
     report = forecasting_utils.suitability_report(_toy_weekly())
@@ -1712,3 +1739,21 @@ def test_read_rule_turns_the_three_numbers_into_a_sentence():
                       "support": 0.01, "confidence": 0.4, "lift": 2.5})
     text = recommender_utils.read_rule(rule, n_baskets=1000)
     assert "40%" in text and "2.5× more often" in text and "10 of 1,000 baskets" in text
+
+
+def test_detection_readings_put_scores_into_words():
+    table = pd.DataFrame({"minimum confidence": ["10%", "75%"], "boxes kept": [33, 4]})
+    assert "**33 boxes** at 10%" in detection_utils.threshold_reading(table)
+    precision, recall = detection_utils.metrics_in_counts({"precision": 0.92, "recall": 1.0}, 12)
+    assert "92 were really spaghetti" in precision and "8 were false alarms" in precision
+    assert "every plate" in recall and "12 check photos" in recall
+    partial = detection_utils.metrics_in_counts({"precision": 0.9, "recall": 0.8}, 10)[1]
+    assert "80% of the plates" in partial and "missing about 20 in 100" in partial
+    compare = pd.DataFrame({
+        "photo": ["gnocchi bolognese", "spaghetti plate"],
+        "pretrained sees": ["bowl (76%), spoon (37%)", "bowl (96%)"],
+        "fine-tuned sees": ["spaghetti_bolo (88%)", "spaghetti_bolo (86%)"],
+    })
+    reading = detection_utils.compare_reading(compare)
+    assert "on **0**" in reading and "**2 of 2**" in reading
+    assert "*bowl*" in reading and "gnocchi" in reading

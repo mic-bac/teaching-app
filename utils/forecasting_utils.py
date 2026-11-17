@@ -69,6 +69,7 @@ try:  # pragma: no cover - exercised by the missing-sibling path
     calendar_events = tc.calendar_events
     explain_misses = tc.explain_misses
     cv_interval = tc.cv_interval
+    with_easter = tc.with_easter
     holt_winters_parts = fm.holt_winters_parts
     simple_exponential_smoothing = tc.simple_exponential_smoothing
     fit_ets = fm.fit_ets
@@ -357,6 +358,65 @@ def prophet_run(train: pd.Series, horizon: int, changepoint_prior_scale: float =
     }
 
 
+def prophet_calendar_cv(sales: pd.Series, n_folds: int = 3, horizon: int | None = None) -> dict:
+    """Which holiday calendar helps Prophet? Mirrors ``forecasting.py`` section 5.
+
+    Three calendars across the rolling-origin folds — Walmart's four holidays,
+    plus the US public calendar, or plus Easter — with Holt-Winters (the
+    previous lesson's best) as the bar. Also returns the miss on the Easter week
+    inside the first fold, with and without Easter in the calendar: the one
+    number that shows *why* the calendar matters.
+    """
+    horizon = horizon or TEST_WEEKS
+    easter = with_easter(WALMART_HOLIDAYS, sales.index[0], sales.index[-1] + pd.Timedelta(weeks=60))
+    calendars = {
+        "Prophet": (WALMART_HOLIDAYS, None),
+        "Prophet + US calendar": (WALMART_HOLIDAYS, "US"),
+        "Prophet + Easter": (easter, None),
+    }
+    events = calendar_events(sales.index, WALMART_HOLIDAYS)
+    scores = {name: [] for name in [*calendars, "Holt-Winters"]}
+    easter_week, easter_miss = None, {}
+    for i, (fold_train, fold_test) in enumerate(rolling_origin_splits(sales, n_folds=n_folds, horizon=horizon)):
+        for name, (calendar, country) in calendars.items():
+            _, forecast = fit_prophet(fold_train, len(fold_test), holidays=calendar, country_holidays=country)
+            prediction = prophet_forecast_only(forecast, fold_test.index)["yhat"].to_numpy()
+            scores[name].append(forecast_metrics(fold_test, prediction)["MAPE"])
+            if i == 0:
+                misses = explain_misses(fold_test, prediction, events)
+                row = misses[misses["event this year"] == "Easter"]
+                if not row.empty:
+                    easter_week, easter_miss[name] = row["week"].iloc[0], float(row["miss %"].iloc[0])
+        scores["Holt-Winters"].append(
+            forecast_metrics(fold_test, fit_ets(fold_train, len(fold_test))[1].to_numpy())["MAPE"])
+    table = pd.DataFrame(
+        [{"model": name, **{f"fold {i}": v for i, v in enumerate(values)}, "mean": float(np.mean(values))}
+         for name, values in scores.items()]
+    )
+    return {"scores": table, "easter_week": easter_week, "easter_miss": easter_miss}
+
+
+def prophet_component_reading(components: dict) -> dict:
+    """The biggest numbers in Prophet's parts, ready to be said in euros.
+
+    Prophet is additive, so every component is an amount added to (or taken
+    from) a week's sales — which makes "the season adds €X" literally true.
+    """
+    out = {}
+    if "yearly" in components:
+        yearly = components["yearly"].drop_duplicates("ds").set_index("ds")["yearly"]
+        out["season_peak"] = (yearly.idxmax(), float(yearly.max()))
+        out["season_low"] = (yearly.idxmin(), float(yearly.min()))
+    if "holidays" in components:
+        holidays = components["holidays"].set_index("ds")["holidays"]
+        holidays = holidays[holidays.abs() > 0]
+        if not holidays.empty:
+            out["holiday_peak"] = (holidays.abs().idxmax(), float(holidays.loc[holidays.abs().idxmax()]))
+    trend = components["trend"].set_index("ds")["trend"]
+    out["trend_change"] = float(trend.iloc[-1] - trend.iloc[0])
+    return out
+
+
 def interval_coverage(actual: pd.Series, predicted: pd.DataFrame) -> float:
     """Share of actual weeks inside Prophet's uncertainty band."""
     a = actual.to_numpy()
@@ -439,7 +499,19 @@ def department_grain(dept_panel: pd.DataFrame) -> dict:
     train, test = split_panel(features, test_weeks=TEST_WEEKS)
     prediction = fit_xgboost(train[DEPT_FEATURES], train["Weekly_Sales"]).predict(test[DEPT_FEATURES])
     summed = test.assign(prediction=prediction).groupby("Date")[["Weekly_Sales", "prediction"]].sum()
+    # One concrete row where MAPE "explodes": a small department week with a big
+    # percentage miss that is tiny in euros. Positive sales only — MAPE skips the rest.
+    small = test.assign(prediction=prediction)
+    small = small[(small["Weekly_Sales"] > 0) & (small["Weekly_Sales"] < 100)]
+    example = None
+    if not small.empty:
+        pct = (small["Weekly_Sales"] - small["prediction"]).abs() / small["Weekly_Sales"]
+        row = small.loc[(pct - 5).abs().idxmin()]  # a typical "~500%" case, not the most extreme
+        example = {"store": int(row["Store"]), "dept": int(row["Dept"]), "date": row["Date"].date(),
+                   "actual": float(row["Weekly_Sales"]), "prediction": float(row["prediction"]),
+                   "pct": float(100 * abs(row["Weekly_Sales"] - row["prediction"]) / row["Weekly_Sales"])}
     return {
+        "example": example,
         "series": features.groupby(["Store", "Dept"]).ngroups,
         "model": forecast_metrics(test["Weekly_Sales"], prediction),
         "baseline": forecast_metrics(test["Weekly_Sales"], test["lag_52"]),

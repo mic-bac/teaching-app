@@ -184,7 +184,8 @@ instead of the lesson.
   `slide_smoothing_table` must keep reproducing slides 70/78 (MAE 10.20, RMSE 13.60 at α = 0.4).
   Forecasting adds `predictions/src/forecast_panel.py` (`build_features`, `CALENDAR`, `LAGS`,
   `score_panel`, `ets_per_store`). The app composes the script's sections in
-  `forecasting_utils` (`prophet_run`, `chain_tree_models`, `store_panel_run`, `depth_sweep`,
+  `forecasting_utils` (`prophet_run`, `prophet_calendar_cv` — section 5's three calendars ×
+  three folds plus Holt-Winters, `chain_tree_models`, `store_panel_run`, `depth_sweep`,
   `external_features_cv`, `department_grain`, `detrending_experiment`, `control_detrending`) —
   compare feature lists (`PANEL_FEATURES`, `DEPT_FEATURES`, `NO_LAGS`), the depth list
   (2, 4, 6, 10), Prophet's holiday settings and the CO₂ 52-week horizon with `forecasting.py`.

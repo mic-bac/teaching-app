@@ -17,7 +17,9 @@ Automated tests for the Streamlit teaching app.
   states that the ranking-only SVM has no survival curve, and the segmentation
   page reacts to its retention-rate slider without reloading the transaction log. The time-series page reproduces the lecture's Excel smoothing example and fits SARIMA on click.
 - **`test_sibling_alignment.py`** — a drift guard for the utils that *re-implement* a
-  sibling script (propensity, survival, recommender). Each hyperparameter is regex-read from
+  sibling script (propensity, survival, recommender — and the inline steps of the time-series
+  and forecasting scripts: CV folds, the band's coverage, the depth sweep, the CO₂ horizon).
+  Each hyperparameter is regex-read from
   the sibling's source and compared with what the app runs. Entries are either `"same"` (the
   app must match) or `"intentional"` (a recorded live-demo deviation); either way the
   sibling's value is pinned, so a sibling edit fails here instead of drifting silently. It
@@ -49,11 +51,14 @@ Automated tests for the Streamlit teaching app.
     `segmentation/src` in one process.
   - forecasting: the feature table drops the first year per store (`lag_52`), the vectorised
     per-store trend in `fit_hybrid` keeps stores apart, and one-Holt-Winters-per-store reports
-    accuracy and cost. The Forecasting page smoke test presses all four experiment buttons.
+    accuracy and cost; `with_easter` adds next year's Easter too, and the Prophet component
+    reading finds the peaks. The Forecasting page smoke test presses all four experiment
+    buttons and checks the Easter calendar test and the worked readings.
   - `detection_utils` — on a tiny fake `results/` export (no sibling, no torch): flattening
     the stored boxes, the confidence threshold (stricter never keeps more boxes), boxes really
     drawn on the photo, the YOLO label format, IoU from 0 to 1, the first epoch reaching a
-    mAP level, the before/after table, credit parsing and the notebook's code-line count. The
+    mAP level, the before/after table, credit parsing, the notebook's code-line count, and the
+    plain-number readings (precision/recall as counts, the threshold trade-off, before vs after). The
     Object Detection smoke test moves the threshold slider (skipped if the sibling results are
     absent).
   - The plain-language readings shown under results: `benchmark_reading` / `io_reading` (both

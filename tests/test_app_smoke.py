@@ -316,6 +316,12 @@ def test_forecasting_page_runs_every_experiment():
         next(b for b in at.button if name in b.label).click().run()
         assert not at.exception, name
     assert "MAPE per department" in [m.label for m in at.metric]
+    # The Easter payoff and the readings: calendar test, worked rows, the verdict in euros.
+    labels = [m.label for m in at.metric]
+    assert any("with Easter in the calendar" in label for label in labels)
+    texts = " ".join(m.value for m in at.markdown)
+    assert "Reading the parts" in texts and "Reading one row" in texts
+    assert "One such row" in texts and "In euros" in texts
 
 
 @pytest.mark.skipif(
@@ -332,3 +338,6 @@ def test_object_detection_threshold_slider_changes_the_boxes():
     assert int(shown()) <= int(loose)
     at.selectbox(key="compare_photo").set_value(at.selectbox(key="compare_photo").options[-1]).run()
     assert not at.exception
+    # The scores and tables come with readings in plain numbers.
+    texts = " ".join(m.value for m in at.markdown)
+    assert "were really spaghetti" in texts and "boxes** at" in texts and "After fine-tuning" in texts

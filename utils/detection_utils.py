@@ -263,3 +263,47 @@ digraph G {{
   photos -> label -> train; yolo -> train; train -> model;
 }}
 """
+
+
+# ---------------------------------------------------------------------------
+# Plain-language readings — the numbers on the page, said in a sentence
+# ---------------------------------------------------------------------------
+
+
+def threshold_reading(table: pd.DataFrame) -> str:
+    """The threshold trade-off on one photo, read off ``threshold_table``."""
+    low, high = table.iloc[0], table.iloc[-1]
+    return (
+        f"On this photo the model keeps **{low['boxes kept']} boxes** at {low['minimum confidence']} "
+        f"but only **{high['boxes kept']}** at {high['minimum confidence']}. The boxes in between are "
+        "the uncertain ones: some are real objects it is unsure about, many are duplicates or guesses."
+    )
+
+
+def metrics_in_counts(best: dict, val_images: int) -> list[str]:
+    """Precision and recall as counts a manager can picture."""
+    precision, recall = best["precision"], best["recall"]
+    found = "every plate" if recall >= 0.995 else f"{recall:.0%} of the plates"
+    return [
+        f"**Precision {precision:.0%}** — of every 100 boxes it drew on the check photos, about "
+        f"**{precision * 100:.0f} were really spaghetti** and {100 - precision * 100:.0f} were false alarms.",
+        f"**Recall {recall:.0%}** — it found **{found}** in the {val_images} check photos"
+        + (", missing none." if recall >= 0.995 else f", missing about {100 - recall * 100:.0f} in 100."),
+    ]
+
+
+def compare_reading(table: pd.DataFrame, new_label: str = "spaghetti") -> str:
+    """Before vs after in one sentence: how many photos each model names correctly."""
+    n = len(table)
+    before = int(table["pretrained sees"].str.contains(new_label).sum())
+    after = int(table["fine-tuned sees"].str.contains(new_label).sum())
+    # The labels the old model reaches for instead, most frequent first.
+    words = (table["pretrained sees"].str.findall(r"([a-z][a-z ]*?) \(").explode().dropna().value_counts())
+    instead = ", ".join(f"*{w}*" for w in words.index[:3]) or "nothing"
+    return (
+        f"**Reading:** on {n} photos, the pretrained model names the dish on **{before}** — the closest it "
+        f"gets is {instead}. After fine-tuning it finds it on **{after} of {n}**, mostly "
+        "with high confidence."
+        + (" Read the rows, not just the count: the gnocchi photo is not spaghetti at all."
+           if table["photo"].str.contains("gnocchi").any() else "")
+    )

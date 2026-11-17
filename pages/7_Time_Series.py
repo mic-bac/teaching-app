@@ -753,7 +753,8 @@ with tab_compare:
         "built on *the same week last year* copies an ordinary week into this year's Easter (too low) and last "
         "year's Easter peak into an ordinary week (too high). Holt-Winters makes the same two mistakes — it has "
         "learned *week 14 of the year*, not *the week before Easter*. The fix is a holiday feature that knows "
-        "where Easter falls; Walmart's official holiday list does not include it, so it would have to be added."
+        "where Easter falls. Walmart's official holiday list does not include it — the **Forecasting** page "
+        "adds it to Prophet and measures what that is worth."
     )
     st.caption(
         "The smaller misses are mostly the level: this year runs a little above last year, so copies of last "

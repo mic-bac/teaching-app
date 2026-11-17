@@ -37,7 +37,9 @@ one interactive tool:
   *reading the misses* against the calendar (Easter moved) — and why Christmas cannot be
   tested with 2.75 seasons of history.
 - **🔮 Forecasting** — *are Prophet and XGBoost worth it here?* Prophet's explainable parts
-  (trend, season, holidays) and the setting that makes forecasts overshoot; XGBoost losing on
+  (trend, season, holidays) and the setting that makes forecasts overshoot; **Easter added to
+  Prophet's calendar** halves the Easter-week miss and gives the lowest error on the chain (the
+  whole US calendar makes it worse); XGBoost losing on
   one short series and winning as one model for 45 stores (forecasting at scale); early
   stopping and overfitting; testing external data; the department level where MAPE breaks;
   and detrending — a fix that helps or hurts depending on the diagnosis.
