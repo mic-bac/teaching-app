@@ -20,13 +20,16 @@ Automated tests for the Streamlit teaching app.
   page reacts to its retention-rate slider without reloading the transaction log. The time-series page reproduces the lecture's Excel smoothing example and fits SARIMA on click.
 - **`test_sibling_alignment.py`** — a drift guard for the utils that *re-implement* a
   sibling script (propensity, survival, recommender — and the inline steps of the time-series
-  and forecasting scripts: CV folds, the band's coverage, the depth sweep, the CO₂ horizon).
+  and forecasting scripts: CV folds, the band's coverage, the depth sweep, the CO₂ horizon — plus the
+  survival evaluation window and risk groups, and the parallelization constants: simulated work per
+  row, worker cap, download threads, dataset columns).
   Each hyperparameter is regex-read from
   the sibling's source and compared with what the app runs. Entries are either `"same"` (the
   app must match) or `"intentional"` (a recorded live-demo deviation); either way the
   sibling's value is pinned, so a sibling edit fails here instead of drifting silently. It
   also checks that the segmentation action table only names segments the sibling's RFM ladder
-  defines. Skips when a sibling repo is not checked out.
+  defines, and that the recency-band mapping (`behavioural_retention`) still matches `cltv.py`
+  section 7 step by step. Skips when a sibling repo is not checked out.
 - **`test_deployment.py`** — every sibling the app reads from is listed in `siblings.toml`
   (https URL, git- and docker-ignored), and the branch rule resolves correctly: app
   `develop` → sibling `develop`, `main` → `main`, environment variables first.
