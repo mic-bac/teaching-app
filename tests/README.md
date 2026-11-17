@@ -8,9 +8,11 @@ Automated tests for the Streamlit teaching app.
   `AppTest` framework and asserts **no exceptions** are raised (`Home.py` plus
   `pages/1_Database_Basics.py` … `pages/6_Segmentation.py`). On top of the load
   check, one or two interactions per page are driven at their cheapest setting:
-  the landing page renders, the DB page shows a backend banner + sales table and
+  the landing page renders, the DB page shows a backend banner + sales table, the
+  Excel-vs-database box and the line-by-line SQL explanation, reads the region chart, and
   the SQL playground runs a query, the CPU and I/O benchmarks run on button
-  click, the recommender returns recommendations and trains its matrix
+  click (the CPU result is scaled to the 1-million-row file, and both tabs show their everyday
+  analogies), the recommender returns recommendations and trains its matrix
   factorization, the propensity page fits a model / cross-validates / tunes /
   draws its learning and validation curves, and the survival page reports
   Kaplan-Meier readouts, trains all three models, scores them over time, and
@@ -62,7 +64,10 @@ Automated tests for the Streamlit teaching app.
     Object Detection smoke test moves the threshold slider (skipped if the sibling results are
     absent).
   - The plain-language readings shown under results: `benchmark_reading` / `io_reading` (both
-    Parallelization races, incl. multiprocessing explained as overlapped waiting) and
+    Parallelization races, incl. multiprocessing explained as overlapped waiting, and the CPU
+    race scaled to the real 1-million-row file), `region_reading` (more sales or bigger ones?),
+    `explain_schema` (column types in plain words), the example SQL queries (each runs, and every
+    explained clause appears in its query) and
     `read_rule` (the top association rule as a sentence).
   - `test_sibling_alignment` also checks that `object-detection/results/` was exported with the
     notebook's current EPOCHS / BATCH / IMG_SIZE (skipped if the sibling is absent).

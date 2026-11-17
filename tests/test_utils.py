@@ -96,12 +96,57 @@ def test_db_total_sales_by_region(tmp_path):
     db_utils.insert_sale(engine, "C", "South", 1, 99.5)
 
     agg = db_utils.total_sales_by_region(engine)
-    assert list(agg.columns) == ["region", "total_sales"]
+    assert list(agg.columns) == ["region", "total_sales", "n_sales"]
+    assert dict(zip(agg["region"], agg["n_sales"])) == {"North": 2, "South": 1}
     # Ordered by total_sales descending: South (99.5) before North (50.0).
     assert list(agg["region"]) == ["South", "North"]
     totals = dict(zip(agg["region"], agg["total_sales"]))
     assert totals["North"] == 50.0
     assert totals["South"] == 99.5
+
+
+def test_region_reading_separates_more_from_bigger():
+    import pandas as pd
+
+    # North: 4 sales of 100 (more, smaller); South: 1 sale of 300.
+    df = pd.DataFrame(
+        {"region": ["North", "South"], "total_sales": [400.0, 300.0], "n_sales": [4, 1]}
+    )
+    text = db_utils.region_reading(df)
+    assert "**North** sold the most: **€400**" in text and "57%" in text
+    assert "€100 in North vs €300 in South" in text
+    assert "North simply has more sales" in text and "from 1 sale." in text
+    both = df.assign(total_sales=[1600.0, 300.0])
+    assert "more sales *and* bigger ones" in db_utils.region_reading(both)
+    assert db_utils.region_reading(df.iloc[0:0]) == ""
+
+
+def test_explain_schema_in_plain_words(tmp_path):
+    engine = _temp_engine(tmp_path)
+    db_utils.init_db(engine)
+    plain = db_utils.explain_schema(db_utils.get_schema(engine)).set_index("column")
+    words = plain["in plain words"]
+    assert words["amount"] == "decimal number"
+    assert words["product"] == "text"
+    assert words["created_at"] == "date and time"
+    assert words["id"].startswith("whole number") and "invoice number" in words["id"]
+
+
+def test_example_queries_run_and_are_explained(tmp_path):
+    engine = _temp_engine(tmp_path)
+    db_utils.init_db(engine)
+    db_utils.insert_sale(engine, "Widget", "North", 2, 300.0)
+    db_utils.insert_sale(engine, "Gadget", "North", 1, 100.0)
+    for name, q in db_utils.EXAMPLE_QUERIES.items():
+        df, msg = db_utils.run_query(engine, q["sql"])
+        assert df is not None, f"{name}: {msg}"
+        table = db_utils.explain_query(name)
+        assert list(table.columns) == ["SQL", "In plain English", "In Excel"]
+        # Every explained clause really appears in the query.
+        flat = " ".join(q["sql"].split())
+        assert all(clause in flat for clause in table["SQL"]), name
+    df, _ = db_utils.run_query(engine, db_utils.EXAMPLE_QUERIES["Big sales in the North"]["sql"])
+    assert list(df["amount"]) == [300.0]
 
 
 def test_db_total_sales_empty(tmp_path):
@@ -1720,6 +1765,16 @@ def test_workflow_diagram_uses_the_real_training_numbers():
 def test_benchmark_reading_reports_both_speedups():
     text = compute_utils.benchmark_reading({"Serial": 2.0, "Parallel": 0.5, "Vectorized": 0.001})
     assert "4.0× faster" in text and "2,000× faster" in text
+
+
+def test_benchmark_reading_scales_to_the_full_file():
+    # 20,000 rows → ×50 to one million: 1.6 s → 80 s, 0.6 s → 30 s, 0.0005 s → 0.03 s.
+    t = {"Serial": 1.6, "Parallel": 0.6, "Vectorized": 0.0005}
+    text = compute_utils.benchmark_reading(t, rows=20_000)
+    assert "1,000,000-row file** (×50)" in text
+    assert "about **80 s**" in text and "about **30 s**" in text and "about **0.03 s**" in text
+    assert "Scaled" not in compute_utils.benchmark_reading(t)
+    assert compute_utils._duration(600) == "10 min"
 
 
 def test_benchmark_reading_admits_when_parallel_does_not_pay_off():

@@ -19,11 +19,12 @@ st.markdown(
 There are **two very different reasons** a program is slow, and each has its own
 cure:
 
-- **CPU-bound** work is slow because it's *computing* a lot. The fix is more
-  **cores** working at once — *parallelism* (`multiprocessing`, vectorization).
-- **I/O-bound** work is slow because it's *waiting* — on the network, a disk, a
-  database. Adding cores barely helps; instead we **overlap the waiting** —
-  *concurrency* (threads, `asyncio`).
+- **CPU-bound** work is slow because it's *computing* a lot — e.g. scoring a churn
+  model for every one of 2 million customers. The fix is more **cores** working at
+  once — *parallelism* (`multiprocessing`, vectorization).
+- **I/O-bound** work is slow because it's *waiting* — on a website, a disk, a
+  database — e.g. downloading 5,000 competitor prices. Adding cores barely helps;
+  instead we **overlap the waiting** — *concurrency* (threads, `asyncio`).
 
 Each tab below races the approaches for one kind of workload.
 """
@@ -50,14 +51,16 @@ with cpu_tab:
 Processing a large dataset row by row can be done in very different ways, and
 the speed difference can be enormous:
 
-- **Serial** — a plain Python loop processes one row at a time. Simple, but the
-  slowest: every row waits for the previous one to finish.
-- **Parallel** — `multiprocessing.Pool` splits the rows across several CPU
-  cores that work at the same time. Faster for genuinely heavy per-row work,
-  though spawning processes and shuffling data between them adds overhead.
-- **Vectorized** — NumPy applies the operation to the whole array at once in
-  optimized C code, with no Python-level loop. Usually the fastest by far for
-  built-in operations like `mean`.
+Think of a supermarket checkout with a long queue:
+
+- **Serial** — *one cashier scans every item, one after another.* A plain Python
+  loop processes one row at a time: simple, but every row waits for the previous one.
+- **Parallel** — *open four tills.* `multiprocessing.Pool` splits the rows across
+  several CPU cores working at the same time. Faster for heavy per-row work — but
+  opening the tills and splitting the queue takes time too, so four tills are never 4× faster.
+- **Vectorized** — *a scanner that reads the whole trolley at once.* NumPy applies
+  the operation to the whole table in one call, in fast compiled code with no
+  Python loop. Usually the fastest by far for built-in operations like `mean`.
 
 First look at the data and the code below, then start the race at the bottom to
 see how they compare.
@@ -175,7 +178,7 @@ see how they compare.
             width="stretch",
         )
         with st.container(border=True):
-            st.markdown("**What you just saw**\n\n" + benchmark_reading(timings))
+            st.markdown("**What you just saw**\n\n" + benchmark_reading(timings, rows=rows))
     else:
         st.info("Choose a dataset size above and click **Start Benchmark Race**.")
 
@@ -192,9 +195,10 @@ barely helps here — idle cores can't make a remote server answer any faster. T
 trick is to **overlap the waiting**: fire off the next request before the previous
 one has come back.
 
-Below are four ways to download the same page many times — a plain loop, threads,
-asyncio, and (for contrast) multiprocessing — each explained with the real code
-that runs. Scroll to the bottom to race them.
+Think of ordering pizzas for a team event. Below are four ways to download the same
+page many times — a plain loop, threads, asyncio, and (for contrast)
+multiprocessing — each with its pizza picture first, then the real code that runs
+(open *How it works in code*). Scroll to the bottom to race them.
 
 > These are **real downloads**. If the network is slow or unreachable the race
 > still runs — failed requests just count as zero bytes.
@@ -217,6 +221,7 @@ that runs. Scroll to the bottom to race them.
     approaches = [
         {
             "title": "1 · Sequential — one request at a time (the baseline)",
+            "plain": "🍕 *Phone one pizzeria, wait on the line until the pizza is at the door, then phone the next.* Total time = every wait added up.",
             "explanation": (
                 "The simplest possible version: loop over the URLs and download them "
                 "one after another over a single reused `Session`. Each `session.get()` "
@@ -230,6 +235,7 @@ that runs. Scroll to the bottom to race them.
         },
         {
             "title": "2 · Threaded — overlap the waiting with a pool of threads",
+            "plain": "🍕 *Five colleagues each phone a pizzeria at the same time.* They still wait, but side by side — so about five orders finish in the time of one.",
             "explanation": (
                 "A `ThreadPoolExecutor` hands the downloads to a small pool of worker "
                 "threads (here `max_workers=5`), so several requests are in flight at "
@@ -249,6 +255,7 @@ that runs. Scroll to the bottom to race them.
         },
         {
             "title": "3 · Async — one thread, hundreds of requests in flight",
+            "plain": "🍕 *One person places every order online, then simply opens the door as each pizza arrives.* No extra helpers, yet all the waiting happens at once.",
             "explanation": (
                 "Instead of many threads, asyncio uses **one** thread running an event "
                 "loop. Each `await session.get(...)` voluntarily hands control back to "
@@ -268,6 +275,7 @@ that runs. Scroll to the bottom to race them.
         },
         {
             "title": "4 · Multiprocessing — the wrong tool here (on purpose)",
+            "plain": "🍕 *Hire a new office worker, with their own desk and phone, for every call.* It works — but it is expensive for a job that is mostly waiting.",
             "explanation": (
                 "This is the champion of the CPU tab, shown here as a deliberate "
                 "*counter-example*. A process `Pool` gives each worker its own Python "
@@ -289,9 +297,11 @@ that runs. Scroll to the bottom to race them.
     for approach in approaches:
         with st.container(border=True):
             st.markdown(f"**{approach['title']}**")
-            st.markdown(approach["explanation"])
-            code = "\n\n".join(source_of(fn) for fn in approach["funcs"])
-            st.code(code, language="python")
+            st.markdown(approach["plain"])
+            with st.expander("🔎 How it works in code"):
+                st.markdown(approach["explanation"])
+                code = "\n\n".join(source_of(fn) for fn in approach["funcs"])
+                st.code(code, language="python")
 
     with st.expander("Show the full reference notebook (`io_concurrency.py`)"):
         st.markdown(

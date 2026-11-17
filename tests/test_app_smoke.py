@@ -56,6 +56,9 @@ def test_db_page_shows_backend_and_table():
     assert at.success or at.warning
     # Schema + live sales table are rendered (across the tabs).
     assert len(at.dataframe) >= 1
+    text = " ".join(m.value for m in at.markdown)
+    assert "Why a database, and not one big Excel file?" in text
+    assert "line by line" in text
 
 
 def test_db_page_sql_playground_runs():
@@ -65,6 +68,15 @@ def test_db_page_sql_playground_runs():
     assert run_buttons, "SQL playground run button not found"
     run_buttons[0].click().run()
     assert not at.exception, f"SQL playground raised: {[str(e) for e in at.exception]}"
+
+
+def test_db_page_region_chart_reads_the_numbers():
+    at = _run("pages/1_Database_Basics.py")
+    at.toggle[0].set_value(True).run()
+    assert not at.exception
+    text = " ".join(m.value for m in at.markdown) + " ".join(i.value for i in at.info)
+    # Either a reading of the chart, or the empty-table hint.
+    assert "sold the most" in text or "No sales recorded yet" in text
 
 
 def test_parallel_page_benchmark_runs():
@@ -81,6 +93,9 @@ def test_parallel_page_benchmark_runs():
     assert not at.exception, f"benchmark raised: {[str(e) for e in at.exception]}"
     # After running, the results include per-approach metrics.
     assert len(at.metric) >= 3
+    text = " ".join(m.value for m in at.markdown)
+    assert "Scaled to the real 1,000,000-row file" in text
+    assert "one cashier scans every item" in text and "Phone one pizzeria" in text
 
 
 def test_parallel_page_io_race_runs():

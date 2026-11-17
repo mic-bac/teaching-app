@@ -11,13 +11,17 @@ from sqlalchemy import insert, select
 
 from utils.db_utils import (
     count_sales,
+    EXAMPLE_QUERIES,
     delete_recent_sales,
+    explain_query,
+    explain_schema,
     fetch_sales,
     get_engine,
     get_schema,
     init_db,
     insert_sale,
     masked_url,
+    region_reading,
     run_query,
     sales,
     seed_sample_sales,
@@ -42,8 +46,9 @@ st.title("🗄️ Database Basics")
 with st.container(border=True):
     st.markdown(
         "💼 **Where you'll use this** — almost everywhere: sales, customers and orders live in databases. "
-        "A few lines of SQL get you the numbers yourself — *revenue by region*, *orders this week* — "
-        "instead of waiting for someone else's report."
+        "A few lines of SQL get you the numbers yourself — *revenue by region* for the Monday meeting, "
+        "*which orders above €250 came in this week* for a sales manager, *how many customers bought twice* "
+        "for marketing — instead of waiting days for someone else's report."
     )
 
 # ---------------------------------------------------------------------------
@@ -65,11 +70,25 @@ tab_setup, tab_data, tab_sql = st.tabs(
 # TAB 1 — Setup & Architecture
 # ===========================================================================
 with tab_setup:
+    with st.container(border=True):
+        st.markdown(
+            """
+**Why a database, and not one big Excel file?**
+
+| | Excel file | Database |
+|---|---|---|
+| Who uses it | one person at a time, copies by e-mail | hundreds of people and programs **at once**, one shared version |
+| Size | slows down around a million rows | billions of rows |
+| Rules | any cell can hold anything | each column has a fixed type — `amount` *must* be a number |
+| Asking questions | filters and pivot tables, by hand | **SQL**: written once, re-run every Monday |
+"""
+        )
+
     st.markdown(
         """
-This page talks to a relational database from Python using **SQLAlchemy**. The
-recommended backend is **PostgreSQL** running inside a **Docker** container, which
-keeps the database isolated and reproducible.
+This page talks to a database from Python. The database is **PostgreSQL**, a free
+database used by many companies, running inside **Docker** — think of Docker as a
+sealed box with the database already installed, so it runs the same on every laptop.
 
 Here's the whole setup at a glance — the highlighted box is the backend you're
 connected to **right now**:
@@ -80,11 +99,14 @@ connected to **right now**:
 
     st.markdown(
         """
-- Your **browser** shows the Streamlit UI.
-- The **Python app** creates one SQLAlchemy *engine* and reuses it for every query.
-- It first tries **PostgreSQL** on `localhost:5432`. If the container isn't running,
-  it transparently falls back to a local **SQLite** file (`data/fallback.db`), so the
-  lesson works with or without Docker.
+How to read it, left to right — like a shop:
+- **Your browser** is the shop window: it shows the page and passes on your clicks.
+- **The Python app** is the clerk: it turns a click (*"show all sales"*) into SQL,
+  using a library called **SQLAlchemy**, and opens one connection it reuses for every question.
+- **PostgreSQL** is the warehouse where the rows are kept. If its box isn't running,
+  the clerk uses a small backup warehouse instead — **SQLite**, a database that is
+  just one file (`data/fallback.db`). The highlighted box shows which one is in use;
+  the lesson works either way.
 """
     )
 
@@ -113,10 +135,11 @@ with tab_data:
     # ----- Schema ---------------------------------------------------------
     st.subheader("The `sales` table")
     st.caption(
-        "Every relational table has a schema: named, typed columns. This one is "
-        "reflected live from the database via SQLAlchemy's inspector."
+        "Every table has a fixed list of named columns, each with a type — this list is "
+        "read live from the database. The type is a promise: the database refuses a "
+        "sale whose `amount` is the word *\"ten\"*, so every total you calculate later can be trusted."
     )
-    st.dataframe(get_schema(engine), width="stretch", hide_index=True)
+    st.dataframe(explain_schema(get_schema(engine)), width="stretch", hide_index=True)
 
     # ----- Seed / remove sample data -------------------------------------
     st.subheader("Need some data?")
@@ -164,6 +187,12 @@ with tab_data:
     show_source(insert_sale, "🐍 The function that writes a row")
     with st.expander("🔎 The SQL SQLAlchemy generates for an insert"):
         st.code(str(insert(sales)), language="sql")
+        st.caption(
+            "Read it as: *put a new row into `sales` with these columns.* The `:product`, "
+            "`:amount`, … are empty slots — the values you typed in the form are sent "
+            "separately and dropped into them. You never write this line yourself; "
+            "the Python function above builds it."
+        )
 
     st.divider()
 
@@ -173,6 +202,10 @@ with tab_data:
     show_source(fetch_sales, "🐍 The function that reads the table")
     with st.expander("🔎 The SQL SQLAlchemy generates for the read"):
         st.code(str(select(sales).order_by(sales.c.id)), language="sql")
+        st.caption(
+            "Read it as: *take every column of every row in `sales`, sorted by `id`* — "
+            "the same as opening a sheet and sorting it by its first column."
+        )
 
     st.divider()
 
@@ -184,6 +217,11 @@ with tab_data:
             st.info("No sales recorded yet — add or seed some rows above.")
         else:
             st.bar_chart(df, x="region", y="total_sales")
+            st.markdown(region_reading(df))
+            st.caption(
+                "The seeded sales are random, so the winner changes when you seed again — "
+                "the question to ask stays the same: *more sales, or bigger ones?*"
+            )
         show_source(
             total_sales_by_region, "🐍 The function that aggregates, then plots"
         )
@@ -198,20 +236,18 @@ with tab_sql:
         "retrieved (and changed) without any Python in the middle."
     )
 
-    EXAMPLES = {
-        "Totals by region": (
-            "SELECT region, COUNT(*) AS n, SUM(amount) AS total\n"
-            "FROM sales\nGROUP BY region\nORDER BY total DESC;"
-        ),
-        "Ten biggest sales": (
-            "SELECT product, region, amount\n"
-            "FROM sales\nORDER BY amount DESC\nLIMIT 10;"
-        ),
-        "Everything": "SELECT * FROM sales;",
-    }
-
-    choice = st.selectbox("Load an example", list(EXAMPLES))
-    query = st.text_area("SQL query", value=EXAMPLES[choice], height=140, key=choice)
+    choice = st.selectbox("Load an example", list(EXAMPLE_QUERIES))
+    query = st.text_area(
+        "SQL query", value=EXAMPLE_QUERIES[choice]["sql"], height=140, key=choice
+    )
+    st.markdown("**The example, line by line** — every SQL step has an Excel twin:")
+    st.dataframe(explain_query(choice), width="stretch", hide_index=True)
+    st.caption(
+        "SQL runs in a fixed order that differs from how it's written: first **FROM** "
+        "(which table), then **WHERE** (filter rows), **GROUP BY** (bundle them), "
+        "**SELECT** (pick columns), **ORDER BY** (sort) and **LIMIT** (cut off). "
+        "Try it: change `250` to `400` in *Big sales in the North* and run again."
+    )
 
     allow_writes = st.checkbox(
         "Allow write/DDL statements (INSERT/UPDATE/DELETE/DROP)",
@@ -235,8 +271,8 @@ with tab_sql:
         st.markdown(
             """
 🎯 **What to remember**
-- **A database is a set of tables you can ask questions** — SQL is the language for asking.
-- **`SELECT … GROUP BY …`** turns raw rows into business answers (totals per region, per month…).
-- **Python and SQL work together:** the app writes and reads the same table you just queried.
+- **A database is a set of shared tables with fixed column types** — SQL is the language for asking them questions.
+- **SQL steps are Excel steps written down:** `WHERE` = filter, `GROUP BY` = pivot table, `ORDER BY` = sort — and a written query can be re-run every Monday.
+- **A total is half an answer:** ask whether it comes from *more* sales or *bigger* ones (`COUNT` and `SUM` together tell you).
 """
         )

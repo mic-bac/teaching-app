@@ -8,10 +8,14 @@ one interactive tool:
   active backend highlighted), an **Explore & Add Data** tab (schema viewer, seed / remove
   sample-data buttons, insert form, live table, and a `SUM(amount) GROUP BY region` chart — each
   paired with a collapsible box showing the *actual function that runs*), and a **SQL Playground** for running
-  raw queries. Falls back to a local SQLite database automatically if the Postgres container isn't
+  raw queries, where each example is explained line by line in plain English and as the matching
+  Excel step (filter, pivot table, sort). The region chart is read with its numbers (*more sales,
+  or bigger ones?*). Falls back to a local SQLite database automatically if the Postgres container isn't
   running.
 - **⚡ Parallelization** — a "benchmark race" comparing **Serial vs Parallel vs Vectorized**
-  row computations in Python, plus a side-by-side view of the equivalent Python and R code.
+  row computations in Python, plus a side-by-side view of the equivalent Python and R code, and a
+  download race (sequential, threads, async, multiprocessing). Every approach has an everyday picture
+  first (checkout tills, ordering pizzas), and the CPU result is scaled to the real 1-million-row file.
 - **🎯 Recommender Systems** — content-based filtering (TF-IDF + cosine similarity),
   collaborative filtering (neighbourhood, a bias baseline, and from-scratch matrix
   factorization trained live), and market-basket **association rules** via Apriori.
