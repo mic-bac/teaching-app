@@ -37,11 +37,12 @@ files are not, the sibling's own loaders fall back to synthetic data and report
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+from utils.teaching import load_sibling_module
 
 # ===========================================================================
 # Sibling bootstrap
@@ -50,17 +51,19 @@ import pandas as pd
 SIBLING = Path(__file__).resolve().parents[1] / "segmentation"
 
 try:  # pragma: no cover - exercised by the missing-sibling path
-    if str(SIBLING) not in sys.path:
-        sys.path.insert(0, str(SIBLING))
-    from src import cltv_core as _cltv
-    from src import clustering_core as _clustering
-    from src import personality_data as _personality
-    from src import retail_data as _retail
-    from src import rfm_scoring as _rfm
+    # Each file is loaded under its own name (sibling_segmentation_<module>), so
+    # segmentation's ``src`` never claims the global name ``src`` that
+    # predictions/ and recommender/ also use. The modules don't import each other,
+    # so no package loader is needed.
+    _cltv = load_sibling_module("segmentation", "src/cltv_core.py")
+    _clustering = load_sibling_module("segmentation", "src/clustering_core.py")
+    _personality = load_sibling_module("segmentation", "src/personality_data.py")
+    _retail = load_sibling_module("segmentation", "src/retail_data.py")
+    _rfm = load_sibling_module("segmentation", "src/rfm_scoring.py")
 
     SIBLING_AVAILABLE = True
     SIBLING_ERROR = ""
-except ImportError as exc:  # pragma: no cover - only when the sibling is absent
+except (ImportError, FileNotFoundError) as exc:  # pragma: no cover - only when the sibling is absent
     SIBLING_AVAILABLE = False
     SIBLING_ERROR = str(exc)
     _retail = _rfm = _clustering = _personality = _cltv = None
@@ -487,12 +490,21 @@ def k_sweep_frame(sweep: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def cluster_label(value: int) -> str:
+    """How a cluster is named on screen: counted from 1, like people count.
+
+    Algorithms number clusters from 0 and DBSCAN marks noise as -1; students read
+    "Cluster 1, 2, 3", so the +1 happens once, here, for every chart and table.
+    """
+    return "Noise" if value == -1 else f"Cluster {int(value) + 1}"
+
+
 def pca_frame(
     coords: np.ndarray, labels: np.ndarray, customers: pd.DataFrame | None = None
 ) -> pd.DataFrame:
     """Plot-ready 2D projection: coordinates plus a readable cluster label."""
     frame = pd.DataFrame({"PC1": coords[:, 0], "PC2": coords[:, 1]})
-    frame["Cluster"] = ["Noise" if v == -1 else f"Cluster {v}" for v in labels]
+    frame["Cluster"] = [cluster_label(v) for v in labels]
     if customers is not None:
         for column in ("Income", "Age", "Total_Spending"):
             if column in customers.columns:
@@ -571,6 +583,43 @@ FEATURE_LABELS = {
 }
 
 
+def silhouette_words(value: float) -> str:
+    """A silhouette score on the scale the page teaches (0.5 separated, 0.25 overlapping, 0 none)."""
+    if value >= 0.5:
+        return "clearly separated groups"
+    if value >= 0.3:
+        return "groups that touch at the edges"
+    if value >= 0.15:
+        return "overlapping groups"
+    return "barely any structure"
+
+
+def metric_favourites(sweep: pd.DataFrame) -> str:
+    """Which k each score prefers — honestly, inertia included (it never has a favourite)."""
+    by_k = sweep.set_index("k")
+    picks = {"Silhouette": int(by_k["silhouette"].idxmax()),
+             "Calinski-Harabasz": int(by_k["calinski_harabasz"].idxmax()),
+             "Davies-Bouldin": int(by_k["davies_bouldin"].idxmin())}
+    if len(set(picks.values())) == 1:
+        head = f"Silhouette, Calinski-Harabasz and Davies-Bouldin all prefer k = {next(iter(picks.values()))}"
+    else:
+        head = "The scores disagree: " + ", ".join(f"{name} prefers k = {k}" for name, k in picks.items())
+    return head + "; inertia keeps falling as k grows (it always does), so it has no favourite — only an elbow."
+
+
+SCORE_COLUMNS = {  # clustering score tables: code names → headings
+    "k": "k", "inertia": "Inertia", "silhouette": "Silhouette", "calinski_harabasz": "Calinski-Harabasz",
+    "davies_bouldin": "Davies-Bouldin", "clusters": "Groups found", "noise": "Unassigned (share)",
+    "smallest_cluster": "Smallest group (customers)",
+}
+
+
+def plain_attribute(name: str) -> str:
+    """A column name as a heading: ``NumWebVisitsMonth`` → ``Web visits a month``."""
+    label = FEATURE_LABELS.get(name, (name,))[0]
+    return label[0].upper() + label[1:]
+
+
 def cluster_size_frame(labels: dict) -> pd.DataFrame:
     """Cluster sizes per algorithm, as shares — one row per (algorithm, cluster).
 
@@ -583,7 +632,7 @@ def cluster_size_frame(labels: dict) -> pd.DataFrame:
         counts = pd.Series(lab).value_counts()
         noise = counts.pop(-1) if -1 in counts.index else 0
         for rank, (cluster, n) in enumerate(counts.sort_values(ascending=False).items()):
-            rows.append({"Algorithm": name, "Cluster": f"Cluster {cluster}", "Rank": rank,
+            rows.append({"Algorithm": name, "Cluster": cluster_label(cluster), "Rank": rank,
                          "Customers": int(n), "Share": n / len(lab)})
         if noise:
             rows.append({"Algorithm": name, "Cluster": "Noise", "Rank": len(counts),
@@ -607,6 +656,31 @@ def cluster_size_reading(sizes: pd.DataFrame) -> list[str]:
             shape = f"very uneven groups ({largest:.0%} down to {smallest:.1%})"
         lines.append(f"**{name}**: {len(clusters)} clusters — {shape}{noise_text}.")
     return lines
+
+
+PERSONA_WORDS = {  # feature: (word when well above average, word when well below)
+    "Income": ("affluent", "budget-minded"),
+    "Age": ("older", "younger"),
+    "Total_Children": ("families", "no kids at home"),
+    "Total_Spending": ("big spenders", "light spenders"),
+    "Total_Purchases": ("frequent buyers", "occasional buyers"),
+    "Total_Campaigns_Accepted": ("campaign fans", "campaign-shy"),
+    "NumWebVisitsMonth": ("online browsers", "rarely online"),
+}
+
+
+def persona_name(fingerprint: pd.Series, top: int = 2) -> str:
+    """A two-trait nickname for a cluster ("Affluent · big spenders") from its strongest z-scores.
+
+    A name a team can say in a meeting is what turns a cluster into a segment;
+    it is built from the data, so it changes when the clusters do.
+    """
+    strongest = [f for f in fingerprint.abs().sort_values(ascending=False).index[:top]
+                 if abs(fingerprint[f]) >= 0.3 and f in PERSONA_WORDS]
+    strongest.sort(key=lambda f: f not in ("Income", "Age"))  # describing words first: "Affluent · …"
+    words = [PERSONA_WORDS[f][0 if fingerprint[f] > 0 else 1] for f in strongest]
+    name = " · ".join(words) if words else "the average customer"
+    return name[0].upper() + name[1:]
 
 
 def describe_cluster(profile: pd.Series, fingerprint: pd.Series, top: int = 3) -> str:

@@ -60,6 +60,15 @@ def default_index(options: list[str], stem: str) -> int:
 results = D.load_results()
 
 st.title("🍝 Object Detection — teach a computer to see something new")
+with st.container(border=True):
+    st.markdown(
+        """
+        💼 **Where you'll use this** — counting products on a shelf to spot gaps, checking parcels
+        or parts for damage at the end of a line, counting visitors or cars from a camera, or
+        sorting thousands of insurance-claim photos by what is in them. Whenever someone says
+        *"we'd need a person to look at every picture"*, a detector is worth a try.
+        """
+    )
 if results is None:
     st.error(
         "This lesson reads the exported results of the sibling `object-detection/` repo, and "
@@ -82,15 +91,6 @@ st.markdown(
     recognise a new kind of object.
     """
 )
-with st.container(border=True):
-    st.markdown(
-        """
-        💼 **Where you'll use this** — counting products on a shelf to spot gaps, checking parcels
-        or parts for damage at the end of a line, counting visitors or cars from a camera, or
-        sorting thousands of insurance-claim photos by what is in them. Whenever someone says
-        *"we'd need a person to look at every picture"*, a detector is worth a try.
-        """
-    )
 st.info(
     "All photos on this page are openly licensed (credits in the last tab). The models ran "
     "in the sibling repo; this page shows their stored results, so it needs no special hardware."
@@ -181,10 +181,10 @@ with tab_new:
         st.image(D.draw_boxes(D.image_path(key), shown), width="stretch")
     with c2:
         st.markdown(
-            """
+            f"""
             The pretrained model is not wrong — it simply has **no word for spaghetti
-            bolognese**. "Spaghetti" is not one of its 80 things, so the best it can do is a
-            *bowl*, a *dining table* or a *fork*.
+            bolognese**. "Spaghetti" is not one of its 80 things, so on this photo the best it
+            can do is {D.things_seen(shown)}.
 
             That is the situation in most companies: your product, your defect, your shelf
             layout is **not** in any public model. So we teach it.
@@ -267,8 +267,8 @@ with tab_learn:
                "exactly this trade-off.")
     st.markdown(
         f"""
-        - **Precision** — of the boxes it drew, how many were really spaghetti.
-        - **Recall** — of the spaghetti plates in the photos, how many it found.
+        And the two overall scores:
+
         - **mAP50** — one overall score, from 0 to 1, that counts a box as right when it
           roughly covers the plate. It first passed 0.9 in **round {reached}**, then wobbled before settling.
         - **mAP50-95** — the same score with a much stricter idea of "covers the plate". It is
@@ -387,8 +387,8 @@ with tab_code:
     for kind, source in cells:
         if kind == "code":
             st.code(source, language="python")
-        else:  # the notebook's own headings, scaled down to sit inside this tab
-            st.markdown(re.sub(r"^#+ ", "#### ", source, flags=re.MULTILINE))
+        else:  # the notebook's own headings, shown as bold text so they don't compete with the page's
+            st.markdown(re.sub(r"^#+ (.*)$", r"**\1**", source, flags=re.MULTILINE))
     with st.expander("📄 How the results on this page were exported (export_results.py)"):
         try:
             st.code((SIBLING / "export_results.py").read_text(), language="python")

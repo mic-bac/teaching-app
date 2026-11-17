@@ -252,7 +252,7 @@ def cross_validate(
         models["SARIMA"] = lambda tr, h: fit_sarima(tr, h)[1].to_numpy()
     rows, errors, forecasts = [], {name: [] for name in models}, []
     for i, (fold_train, fold_test) in enumerate(rolling_origin_splits(sales, n_folds=n_folds, horizon=horizon)):
-        row = {"fold": i, "train_weeks": len(fold_train),
+        row = {"fold": i + 1, "train_weeks": len(fold_train),
                "test_from": fold_test.index[0].date(), "test_to": fold_test.index[-1].date()}
         predictions = {}
         for name, forecast_fn in models.items():
@@ -305,7 +305,7 @@ def timeseries_flow_dot() -> str:
     return """
 digraph ts {
   rankdir=LR;
-  node [shape=box style="rounded,filled" fontname="Helvetica" fontsize=10 fillcolor="#ECEFF1"];
+  node [shape=box style="rounded,filled" fontname="Helvetica" fontsize=14 fillcolor="#ECEFF1"];
   edge [color="#616161"];
   data   [label="Weekly chain sales\\n143 weeks" fillcolor="#BBDEFB"];
   report [label="Forecastable?\\nsuitability report" fillcolor="#FFF9C4"];
@@ -390,7 +390,7 @@ def prophet_calendar_cv(sales: pd.Series, n_folds: int = 3, horizon: int | None 
         scores["Holt-Winters"].append(
             forecast_metrics(fold_test, fit_ets(fold_train, len(fold_test))[1].to_numpy())["MAPE"])
     table = pd.DataFrame(
-        [{"model": name, **{f"fold {i}": v for i, v in enumerate(values)}, "mean": float(np.mean(values))}
+        [{"model": name, **{f"fold {i}": v for i, v in enumerate(values, start=1)}, "mean": float(np.mean(values))}
          for name, values in scores.items()]
     )
     return {"scores": table, "easter_week": easter_week, "easter_miss": easter_miss}
@@ -489,7 +489,7 @@ def external_features_cv(panel: pd.DataFrame) -> pd.DataFrame:
     for name, columns in [("calendar + lags", PANEL_FEATURES),
                           ("+ temperature, fuel, CPI, unemployment", PANEL_FEATURES + EXTERNAL_FEATURES)]:
         scores = score_panel(panel, columns)
-        rows.append({"feature set": name, **{f"fold {i}": v for i, v in enumerate(scores)}, "mean": np.mean(scores)})
+        rows.append({"feature set": name, **{f"fold {i}": v for i, v in enumerate(scores, start=1)}, "mean": np.mean(scores)})
     return pd.DataFrame(rows)
 
 
@@ -528,7 +528,7 @@ def detrending_experiment(panel: pd.DataFrame) -> pd.DataFrame:
         for hybrid in (False, True):
             scores = score_panel(panel, columns, hybrid=hybrid)
             rows.append({"features": lags, "model": "trend + XGBoost" if hybrid else "plain XGBoost",
-                         **{f"fold {i}": v for i, v in enumerate(scores)}, "mean": np.mean(scores)})
+                         **{f"fold {i}": v for i, v in enumerate(scores, start=1)}, "mean": np.mean(scores)})
     return pd.DataFrame(rows)
 
 
@@ -563,6 +563,18 @@ def money(value: float) -> str:
     if value >= 1e3:
         return f"{sign}€{value / 1e3:,.0f}k"
     return f"{sign}€{value:,.0f}"
+
+
+def big_number(value: float) -> str:
+    """A huge number in words: 1.26e+12 reads as "1.3 trillion".
+
+    MSE squares euros, so on weekly sales of tens of millions it lands in the
+    trillions — scientific notation hides that this size *is* the lesson.
+    """
+    for size, word in ((1e12, "trillion"), (1e9, "billion"), (1e6, "million")):
+        if abs(value) >= size:
+            return f"{value / size:,.1f} {word}"
+    return f"{value:,.0f}"
 
 
 def mape_in_money(mape: float, sales: pd.Series) -> str:

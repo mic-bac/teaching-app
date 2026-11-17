@@ -12,7 +12,7 @@ Nothing in this module runs at import time; the demo is guarded under
 ``if __name__ == "__main__":``.
 """
 
-from time import time, sleep
+from time import perf_counter, sleep  # perf_counter: a stopwatch that never jumps (the wall clock can)
 import warnings
 from multiprocessing import cpu_count, get_context
 
@@ -33,9 +33,9 @@ def run_serial(data):
 
     Returns ``(results, elapsed_seconds)``.
     """
-    time_start = time()
+    time_start = perf_counter()
     results = [expensive_row_op(row) for row in data]
-    elapsed = time() - time_start
+    elapsed = perf_counter() - time_start
     return results, elapsed
 
 
@@ -69,10 +69,10 @@ def run_parallel(data, n_cpu: int = 4):
     """
     n_workers = min(n_cpu, cpu_count())
     try:
-        time_start = time()
+        time_start = perf_counter()
         with fork_pool(n_workers) as pool:
             results = pool.map(expensive_row_op, data)
-        elapsed = time() - time_start
+        elapsed = perf_counter() - time_start
         return results, elapsed
     except Exception:
         # Multiprocessing unavailable (e.g. restricted platform): time serially.
@@ -84,9 +84,9 @@ def run_vectorized(data):
 
     Returns ``(result, elapsed_seconds)``.
     """
-    time_start = time()
+    time_start = perf_counter()
     result = np.mean(data, axis=1)
-    elapsed = time() - time_start
+    elapsed = perf_counter() - time_start
     return result, elapsed
 
 

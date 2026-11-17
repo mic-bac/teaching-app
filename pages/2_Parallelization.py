@@ -12,7 +12,13 @@ st.set_page_config(page_title="Parallelization", layout="wide", page_icon="⚡")
 
 ROOT = Path(__file__).resolve().parents[1]
 
-st.title("⚡ Two Ways to Go Faster: Parallelism vs. Concurrency")
+st.title("⚡ Parallelization — why is my code slow, and how do I make it faster?")
+with st.container(border=True):
+    st.markdown(
+        "💼 **Where you'll use this** — a report that runs for an hour instead of minutes, a script that "
+        "downloads thousands of prices or files, a data job that blocks your laptop. Knowing *why* it is "
+        "slow tells you which fix works — and often the fix is just a few lines."
+    )
 
 st.markdown(
     """
@@ -29,12 +35,6 @@ cure:
 Each tab below races the approaches for one kind of workload.
 """
 )
-with st.container(border=True):
-    st.markdown(
-        "💼 **Where you'll use this** — a report that runs for an hour instead of minutes, a script that "
-        "downloads thousands of prices or files, a data job that blocks your laptop. Knowing *why* it is "
-        "slow tells you which fix works — and often the fix is just a few lines."
-    )
 
 cpu_tab, io_tab = st.tabs(
     ["🧮 CPU-bound — Parallelism", "🌐 I/O-bound — Concurrency"]
@@ -62,8 +62,8 @@ Think of a supermarket checkout with a long queue:
   the operation to the whole table in one call, in fast compiled code with no
   Python loop. Usually the fastest by far for built-in operations like `mean`.
 
-First look at the data and the code below, then start the race at the bottom to
-see how they compare.
+First look at the data, then race them. The code behind each approach — in Python
+and, for comparison, in R — follows below the race.
 """
     )
 
@@ -73,11 +73,48 @@ see how they compare.
         "**mean of each row** — a tiny operation repeated across all the rows, which "
         "is exactly the kind of workload that parallelization speeds up."
     )
-    st.dataframe(generate_dataset(5), width="stretch")
+    st.dataframe(generate_dataset(5), width="stretch", hide_index=True)
     st.caption(
         "First 5 rows, generated on the fly. The real `parallel_big_data.csv` (184 MB, "
         "1 M rows) has the same shape — random floats in [0, 1) across 10 columns."
     )
+
+    st.divider()
+
+    st.subheader("🏁 Race them")
+    st.markdown(
+        "Pick a dataset size and run all three approaches on freshly generated data."
+    )
+
+    rows = st.slider(
+        "Dataset size (rows)",
+        min_value=1000,
+        max_value=100000,
+        value=20000,
+        step=1000,
+    )
+
+    if st.button("🏁 Start Benchmark Race"):
+        with st.spinner(f"Racing three approaches over {rows:,} rows..."):
+            timings = run_benchmark(rows)
+
+        st.subheader("Results")
+
+        chart_df = pd.DataFrame(
+            {"Seconds": [timings["Serial"], timings["Parallel"], timings["Vectorized"]]},
+            index=["Serial", "Parallel", "Vectorized"],
+        )
+        st.bar_chart(chart_df, sort=False)
+
+        col_s, col_p, col_v = st.columns(3)
+        col_s.metric("Serial", f"{timings['Serial']:.4f} s")
+        col_p.metric("Parallel", f"{timings['Parallel']:.4f} s")
+        col_v.metric("Vectorized", f"{timings['Vectorized']:.4f} s")
+
+        with st.container(border=True):
+            st.markdown("**What you just saw**\n\n" + benchmark_reading(timings, rows=rows))
+    else:
+        st.info("Choose a dataset size above and click **Start Benchmark Race**.")
 
     st.divider()
 
@@ -140,53 +177,11 @@ see how they compare.
         full_r.markdown("**📊 `parallel.R`**")
         full_r.code(r_source or "", language="r")
 
-    st.divider()
-
-    st.subheader("🏁 Race them")
-    st.markdown(
-        "Now that you've seen the code, pick a dataset size and run all three "
-        "approaches on freshly generated data."
-    )
-
-    rows = st.slider(
-        "Dataset size (rows)",
-        min_value=1000,
-        max_value=100000,
-        value=20000,
-        step=1000,
-    )
-
-    if st.button("🏁 Start Benchmark Race"):
-        with st.spinner(f"Racing three approaches over {rows:,} rows..."):
-            timings = run_benchmark(rows)
-
-        st.subheader("Results")
-
-        chart_df = pd.DataFrame(
-            {"Seconds": [timings["Serial"], timings["Parallel"], timings["Vectorized"]]},
-            index=["Serial", "Parallel", "Vectorized"],
-        )
-        st.bar_chart(chart_df, sort=False)
-
-        col_s, col_p, col_v = st.columns(3)
-        col_s.metric("Serial", f"{timings['Serial']:.4f} s")
-        col_p.metric("Parallel", f"{timings['Parallel']:.4f} s")
-        col_v.metric("Vectorized", f"{timings['Vectorized']:.4f} s")
-
-        st.dataframe(
-            chart_df.style.format({"Seconds": "{:.6f}"}),
-            width="stretch",
-        )
-        with st.container(border=True):
-            st.markdown("**What you just saw**\n\n" + benchmark_reading(timings, rows=rows))
-    else:
-        st.info("Choose a dataset size above and click **Start Benchmark Race**.")
-
 # ===========================================================================
 # I/O-BOUND TAB
 # ===========================================================================
 with io_tab:
-    st.header("Synchronous vs. Threaded vs. Async vs. Multiprocessing")
+    st.header("Sequential vs. Threaded vs. Async vs. Multiprocessing")
 
     st.markdown(
         """
@@ -206,8 +201,7 @@ multiprocessing — each with its pizza picture first, then the real code that r
     )
 
     # -- The one primitive every approach shares -----------------------------
-    with st.container(border=True):
-        st.markdown("**The shared building block — one download**")
+    with st.expander("🔎 The shared building block in code — one download"):
         st.markdown(
             "All four approaches fetch a URL with this one helper and count the bytes "
             "that come back. Only *how they schedule these calls* differs. It catches "
@@ -348,15 +342,12 @@ multiprocessing — each with its pizza picture first, then the real code that r
         for col, name in zip(cols, order):
             col.metric(name, f"{timings[name]:.3f} s")
 
-        st.dataframe(
-            chart_df.style.format({"Seconds": "{:.6f}"}),
-            width="stretch",
-        )
         with st.container(border=True):
             st.markdown("**What you just saw**\n\n" + io_utils.io_reading(timings, count))
     else:
         st.info("Set a URL and request count above, then click **Start Download Race**.")
 
+st.divider()
 with st.container(border=True):
     st.markdown(
         """

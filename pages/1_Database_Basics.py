@@ -42,7 +42,7 @@ def show_source(obj, label: str) -> None:
         st.code(source_of(obj), language="python")
 
 
-st.title("🗄️ Database Basics")
+st.title("🗄️ Database Basics — where does company data live, and how do we ask it?")
 with st.container(border=True):
     st.markdown(
         "💼 **Where you'll use this** — almost everywhere: sales, customers and orders live in databases. "
@@ -139,7 +139,7 @@ with tab_data:
         "read live from the database. The type is a promise: the database refuses a "
         "sale whose `amount` is the word *\"ten\"*, so every total you calculate later can be trusted."
     )
-    st.dataframe(explain_schema(get_schema(engine)), width="stretch", hide_index=True)
+    st.table(explain_schema(get_schema(engine)), hide_index=True)
 
     # ----- Seed / remove sample data -------------------------------------
     st.subheader("Need some data?")
@@ -198,7 +198,7 @@ with tab_data:
 
     # ----- Live table -----------------------------------------------------
     st.subheader("All sales")
-    st.dataframe(fetch_sales(engine), width="stretch")
+    st.dataframe(fetch_sales(engine), width="stretch", hide_index=True)
     show_source(fetch_sales, "🐍 The function that reads the table")
     with st.expander("🔎 The SQL SQLAlchemy generates for the read"):
         st.code(str(select(sales).order_by(sales.c.id)), language="sql")
@@ -241,7 +241,7 @@ with tab_sql:
         "SQL query", value=EXAMPLE_QUERIES[choice]["sql"], height=140, key=choice
     )
     st.markdown("**The example, line by line** — every SQL step has an Excel twin:")
-    st.dataframe(explain_query(choice), width="stretch", hide_index=True)
+    st.table(explain_query(choice), hide_index=True)
     st.caption(
         "SQL runs in a fixed order that differs from how it's written: first **FROM** "
         "(which table), then **WHERE** (filter rows), **GROUP BY** (bundle them), "
@@ -261,18 +261,19 @@ with tab_sql:
             st.error(message)
         elif result_df is not None:
             st.success(message)
-            st.dataframe(result_df, width="stretch")
+            st.dataframe(result_df, width="stretch", hide_index=True)
         else:
             st.success(message)
 
     show_source(run_query, "🐍 How the query runs (and how writes are guarded)")
 
-    with st.container(border=True):
-        st.markdown(
-            """
+st.divider()
+with st.container(border=True):
+    st.markdown(
+        """
 🎯 **What to remember**
 - **A database is a set of shared tables with fixed column types** — SQL is the language for asking them questions.
 - **SQL steps are Excel steps written down:** `WHERE` = filter, `GROUP BY` = pivot table, `ORDER BY` = sort — and a written query can be re-run every Monday.
 - **A total is half an answer:** ask whether it comes from *more* sales or *bigger* ones (`COUNT` and `SUM` together tell you).
 """
-        )
+    )

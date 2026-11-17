@@ -1,7 +1,13 @@
 # Teaching App 🎓
 
 A multi-page **Streamlit** app that unifies the teaching lessons from this workspace into
-one interactive tool:
+one interactive tool. The Home page numbers the lessons 1–9 and suggests a path (the data → your
+customers → the future → photos); Survival continues Propensity, and Forecasting continues
+Time Series. Every lesson page has the same frame: **💼 Where you'll use this** right under the
+title, **🎯 What to remember** at the very bottom (outside the tabs, so it is there whichever tab
+is open), every chart and table followed by a reading with its real numbers, and code names
+(`Gender_Male`, `NumWebVisitsMonth`) shown in plain words. Customers, clusters and folds are
+counted from 1.
 
 - **🗄️ Database Basics** — a hands-on relational-database lesson organized into three tabs:
   an **architecture diagram** of the setup (PostgreSQL-in-Docker ← Python/SQLAlchemy, with the
@@ -16,10 +22,10 @@ one interactive tool:
   row computations in Python, plus a side-by-side view of the equivalent Python and R code, and a
   download race (sequential, threads, async, multiprocessing). Every approach has an everyday picture
   first (checkout tills, ordering pizzas), and the CPU result is scaled to the real 1-million-row file.
-- **🎯 Recommender Systems** — content-based filtering (TF-IDF + cosine similarity),
+- **🛒 Recommender Systems** — content-based filtering (TF-IDF + cosine similarity),
   collaborative filtering (neighbourhood, a bias baseline, and from-scratch matrix
   factorization trained live), and market-basket **association rules** via Apriori.
-- **🔮 Propensity Models** — look-alike modeling for churn: the observation → buffer →
+- **🎲 Propensity Models** — look-alike modelling for churn: the observation → buffer →
   outcome time design, three model families (logistic regression, XGBoost, neural net),
   stratified cross-validation and grid/randomized search, the metrics imbalanced data
   actually needs (confusion matrix, precision/recall/F1, ROC-AUC, PR-AUC), learning and

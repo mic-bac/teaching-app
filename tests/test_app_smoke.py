@@ -189,7 +189,7 @@ def test_propensity_page_fits_a_model_at_the_smallest_sample():
     assert any("customers" in c.value and "churned" in c.value for c in at.caption)
     assert not any("Kaggle" in w.value for w in at.warning)
     # Every metric is explained in customers, not just shown as a number.
-    assert any("Question it answers" in d.value.columns for d in at.dataframe)
+    assert any("Question it answers" in d.value.columns for d in at.table)
 
 
 def test_propensity_page_cross_validation_and_tuning_run():
@@ -326,7 +326,7 @@ def test_forecasting_page_runs_every_experiment():
     at.run()
     assert not at.exception
     labels = [m.label for m in at.metric]
-    assert "Prophet MAPE" in labels and "Trees actually used" in labels
+    assert "Prophet MAPE (chain + US holidays)" in labels and "Trees actually used" in labels
     for name in ("department model", "Run the experiment", "Run the comparison", "Holt-Winters model per store"):
         next(b for b in at.button if name in b.label).click().run()
         assert not at.exception, name

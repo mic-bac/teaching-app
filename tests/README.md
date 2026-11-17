@@ -69,6 +69,15 @@ Automated tests for the Streamlit teaching app.
     `explain_schema` (column types in plain words), the example SQL queries (each runs, and every
     explained clause appears in its query) and
     `read_rule` (the top association rule as a sentence).
+  - From the holistic review: plain names instead of code names (`plain_feature`, `plain_attribute`,
+    the censoring-table headings), customers / clusters / folds counted from 1, `big_number`
+    (MSE as "1.3 trillion", not `1.26e+12`), whole numbers in the survival customer table, and the
+    new readings — content-based ties and taste-profile blends, the item-based list, the
+    correlation chart, the churn climb across risk segments (incl. "Medium ≈ High"), when the
+    contract-length gap opens, neighbouring risk strata that overlap, which k each clustering
+    score prefers (inertia has none), the silhouette in words, cluster nicknames, and the labels a
+    pretrained detector saw on one photo. Also: the tuning results as a plain table with a "did
+    tuning matter?" reading, and the integrated Brier score read against the 0.25 guessing line.
   - `test_sibling_alignment` also checks that `object-detection/results/` was exported with the
     notebook's current EPOCHS / BATCH / IMG_SIZE (skipped if the sibling is absent).
   - `data_generator.generate_dataset` — shape, column names, value range.

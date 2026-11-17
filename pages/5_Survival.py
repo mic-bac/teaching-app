@@ -31,6 +31,9 @@ from utils.teaching import source_of
 
 st.set_page_config(page_title="Survival Analysis", layout="wide", page_icon="⏳")
 
+# Clearly different colours for lines that must be told apart (the default theme uses shades of blue).
+DISTINCT = ["#1565c0", "#e65100", "#2e7d32", "#c62828", "#6a1b9a", "#00838f"]
+
 ROOT = Path(__file__).resolve().parents[1]
 SIBLING = ROOT / "predictions"
 
@@ -88,6 +91,14 @@ def cached_model(model_name: str, sample_size: int):
 # Header + the one control every tab depends on
 # ===========================================================================
 st.title("⏳ Survival Analysis — how long do our customers stay?")
+with st.container(border=True):
+    st.markdown(
+        """
+        💼 **Where you'll use this** — timing a retention call *before* a customer is likely to leave,
+        estimating how long a subscriber stays (and so what they are worth), or planning when machines,
+        contracts or licences will need replacing. Wherever the question is *"when?"*, not just *"if?"*.
+        """
+    )
 st.markdown(
     """
     Classification answers *whether* a customer churns. Survival analysis answers
@@ -100,14 +111,6 @@ st.markdown(
     Every tab shows the **real code** that produces the result, not a slide summary.
     """
 )
-with st.container(border=True):
-    st.markdown(
-        """
-        💼 **Where you'll use this** — timing a retention call *before* a customer is likely to leave,
-        estimating how long a subscriber stays (and so what they are worth), or planning when machines,
-        contracts or licences will need replacing. Wherever the question is *"when?"*, not just *"if?"*.
-        """
-    )
 
 control, status = st.columns([2, 3])
 with control:
@@ -216,7 +219,7 @@ with tab_overview:
     )
     st.plotly_chart(fig_shift, width="stretch")
 
-    st.dataframe(example, width="stretch", hide_index=True)
+    st.dataframe(example.rename(columns=S.CENSORING_COLUMNS), width="stretch", hide_index=True)
 
     X, y, feature_names = cached_survival(sample_size)
     c1, c2, c3, c4 = st.columns(4)
@@ -227,7 +230,7 @@ with tab_overview:
 
     st.info(
         "`Tenure` must **not** be a feature here: it *is* the time we are modelling. "
-        "Feeding it in is textbook target leakage — see `EXCLUDED_FEATURES`."
+        "Feeding it in is textbook target leakage: the model would be told the answer it is meant to predict."
     )
 
     show_source(S.prepare_survival, "🐍 Turning a customer table into survival data")
@@ -304,11 +307,13 @@ with tab_km:
         y="survival",
         color=group_col,
         line_shape="hv",
+        color_discrete_sequence=DISTINCT,
         title=f"<b>Survival by {group_col.lower()}</b>",
         labels={"time": "Months since signup", "survival": "Share still customers"},
     )
     fig_group.update_layout(height=470, yaxis_range=[0, 1])
     st.plotly_chart(fig_group, width="stretch")
+    st.markdown(S.group_reading(grouped, group_col))
 
     show_source(S.kaplan_meier, "🐍 The Kaplan-Meier estimator")
     show_source(S.km_by_group, "🐍 One curve per segment")
@@ -477,6 +482,7 @@ with tab_eval:
             )
             fig_brier.update_layout(height=400, showlegend=False)
             st.plotly_chart(fig_brier, width="stretch")
+            st.markdown(S.brier_reading(brier_rows))
 
         for row in brier_rows:
             value = row["Integrated Brier score"]
@@ -510,7 +516,7 @@ with tab_individual:
 
     indices = list(range(n_customers))
     labels = [
-        f"Customer {i} — {'churned' if split['y_test'][i]['event'] else 'still active'} at {split['y_test'][i]['time']:.0f}m"
+        f"Customer {i + 1} — {'churned' if split['y_test'][i]['event'] else 'still active'} at {split['y_test'][i]['time']:.0f}m"
         for i in indices
     ]
     curves = S.individual_survival_curves(model, split["X_test"], indices, labels)
@@ -533,8 +539,7 @@ with tab_individual:
             "This is the slide's point made concrete: a ranking model orders customers but has no S(t) "
             "to draw. Pick Cox or the forest to see curves."
         )
-        st.dataframe(S.customer_snapshot(raw_test, split["y_test"], indices, labels),
-                     width="stretch", hide_index=True)
+        st.table(S.customer_snapshot(raw_test, split["y_test"], indices, labels), hide_index=True)
     else:
         fig_ind = px.line(
             curves,
@@ -542,17 +547,18 @@ with tab_individual:
             y="survival",
             color="customer",
             line_shape="hv",
+            color_discrete_sequence=DISTINCT,
             title=f"<b>Predicted survival curves — {curve_model_name}</b>",
             labels={"time": "Months since signup", "survival": "Share still customers"},
         )
         fig_ind.update_layout(height=470, yaxis_range=[0, 1])
         st.plotly_chart(fig_ind, width="stretch")
         snapshot = S.customer_snapshot(raw_test, split["y_test"], indices, labels, curves)
-        st.dataframe(
+        st.table(
             snapshot.style.format({c: "{:.0%}" for c in snapshot.columns if c.startswith("Predicted still")}
                                   | {"Predicted median lifetime (months)": "{:.0f}", "Total Spend": "{:,.0f}"},
                                   na_rep="—"),
-            width="stretch", hide_index=True,
+            hide_index=True,
         )
         st.markdown("**Reading the curves, customer by customer:**\n\n" + S.curve_reading(snapshot))
         st.caption(
@@ -563,6 +569,7 @@ with tab_individual:
     if curve_model_name == "Cox Proportional Hazards":
         st.markdown("**What drives the hazard?**")
         coefficients = S.cox_coefficients(model, split["feature_names"])
+        coefficients["feature"] = coefficients["feature"].map(S.plain_feature)
         fig_coef = px.bar(
             coefficients,
             x="coefficient",
@@ -628,9 +635,16 @@ with tab_individual:
         - Compare several models, by cross-validation and more than one metric.
         """
     )
-    with st.container(border=True):
-        st.markdown(
-            """
+
+    show_source(S.individual_survival_curves, "🐍 Individual survival curves")
+    show_source(S.cox_coefficients, "🐍 Cox coefficients as hazard ratios")
+    show_source(S.risk_strata, "🐍 Risk stratification")
+    show_sibling_script("survival.py", "📄 The full sibling script")
+
+st.divider()
+with st.container(border=True):
+    st.markdown(
+        """
 🎯 **What to remember**
 - **"Not yet" is information.** Customers who are still here tell you something — survival
   analysis uses them instead of ignoring them.
@@ -639,9 +653,4 @@ with tab_individual:
 - **Judge models on order *and* on probabilities** — the c-index and the Brier score answer
   different questions.
 """
-        )
-
-    show_source(S.individual_survival_curves, "🐍 Individual survival curves")
-    show_source(S.cox_coefficients, "🐍 Cox coefficients as hazard ratios")
-    show_source(S.risk_strata, "🐍 Risk stratification")
-    show_sibling_script("survival.py", "📄 The full sibling script")
+    )

@@ -129,15 +129,6 @@ baseline_mape = F.forecast_metrics(test, baseline)["MAPE"]
 # Header
 # ===========================================================================
 st.title("🔮 Forecasting — are Prophet and XGBoost worth it here?")
-st.markdown(
-    """
-    **"Prophet and XGBoost are supposed to be state of the art. Should we use them for our sales forecast?"**
-
-    The honest answer is: *it depends* — and this lesson shows **on what**. We fit both models to the
-    same Walmart sales as the Time Series lesson, then to the same sales split by store and by
-    department, and watch the winner change. Every tab shows the **real code** from the sibling repo.
-    """
-)
 with st.container(border=True):
     st.markdown(
         """
@@ -146,6 +137,15 @@ with st.container(border=True):
         thousands of products at once (XGBoost). And the judgement to know when a simple forecast is enough.
         """
     )
+st.markdown(
+    """
+    **"Prophet and XGBoost are supposed to be state of the art. Should we use them for our sales forecast?"**
+
+    The honest answer is: *it depends* — and this lesson shows **on what**. We fit both models to the
+    same retail-chain sales as the Time Series lesson, then to the same sales split by store and by
+    department, and watch the winner change. Every tab shows the **real code** from the sibling repo.
+    """
+)
 st.caption(f"**The data:** weekly sales of a retail chain — chain total, {stores['Store'].nunique()} stores "
            f"and their departments ({sales.index[0].date()} to {sales.index[-1].date()}).")
 st.caption(f"The bar to beat on the chain total: *same week last year* (seasonal naive) — MAPE "
@@ -170,7 +170,9 @@ with tab_prophet:
     st.subheader("A forecast you can explain")
     st.markdown(
         "Prophet builds the forecast from parts you can show to anyone: **trend + yearly season + "
-        "holiday effects**. So *\"why is November up?\"* gets a real answer, not *\"the model said so\"*."
+        "holiday effects**. So *\"why is November up?\"* gets a real answer, not *\"the model said so\"*. "
+        "This first run uses the obvious calendar — the chain's four holidays **plus the US public holidays**. "
+        "Whether that was wise is tested further down, in the Easter section."
     )
     scale = st.select_slider(
         "How freely may the trend bend? (changepoint_prior_scale)",
@@ -198,7 +200,7 @@ with tab_prophet:
     st.plotly_chart(fig, width="stretch")
 
     c = st.columns(3)
-    c[0].metric("Prophet MAPE", f"{prophet_mape:.2f}%", f"{prophet_mape - baseline_mape:+.2f} vs same-week-last-year",
+    c[0].metric("Prophet MAPE (chain + US holidays)", f"{prophet_mape:.2f}%", f"{prophet_mape - baseline_mape:+.2f} vs same-week-last-year",
                 delta_color="inverse")
     c[1].metric("Weeks inside the 95% range", f"{F.interval_coverage(test, predicted):.0%}",
                 help="A 95% range should miss about 1 week in 20. Catching every week means the range is "
@@ -242,7 +244,7 @@ with tab_prophet:
     st.markdown("**Reading the parts** (Prophet *adds* them up, so each is an amount in euros):\n\n"
                 + "\n".join(f"- {line}" for line in lines))
     st.caption(
-        "The holiday bars are knowledge we *gave* the model: Walmart's four holidays (Super Bowl, Labor Day, "
+        "The holiday bars are knowledge we *gave* the model: the chain's four holidays (Super Bowl, Labor Day, "
         "Thanksgiving, Christmas) plus the US public calendar. Whether a calendar actually helps is tested next."
     )
     with st.expander("🔎 The maths, if you're curious"):
@@ -256,7 +258,7 @@ with tab_prophet:
     st.subheader("🐣 The holiday the calendar forgot: Easter")
     st.markdown(
         "The Time Series page ended on its biggest miss: **Easter moved** (24 April 2011 → 8 April 2012), and "
-        "every seasonal model copied last year's calendar. Walmart's holiday list has no Easter, and neither has "
+        "every seasonal model copied last year's calendar. The chain's holiday list has no Easter, and neither has "
         "the US public calendar. Prophet takes a list of dated events — so we add Easter (one row per year) and "
         "test three calendars on the same three folds as before, against Holt-Winters, the best model so far."
     )
@@ -465,7 +467,11 @@ with tab_grain:
             f"MAPE divides by the actual sales. {dep['small_rows']:,} of {dep['test_rows']:,} test rows are departments "
             "that sold under 100 in a week: being 200 off on a week that sold 40 counts as a 500% error, though it is "
             "small change in euros. When even the baseline scores absurdly, suspect the metric. At this level, use "
-            "**MAE** (average miss in euros) instead."
+            "**MAE** (average miss in euros) instead: "
+            f"the model misses a department-week by **{F.money(dep['model']['MAE'])}** on average, against "
+            f"{F.money(dep['baseline']['MAE'])} for same-week-last-year — "
+            + ("the model *is* better, in euros anyone can judge."
+               if dep['model']['MAE'] < dep['baseline']['MAE'] else "here the baseline is as good, in euros.")
         )
         ex = dep.get("example")
         if ex:
@@ -530,19 +536,27 @@ with tab_trend:
 with tab_verdict:
     st.subheader("Who wins? It depends on the level of detail")
     cal_means = cached_calendar_cv(sales)["scores"].set_index("model")["mean"]
-    rows = [{"level": "chain total, best model", "result": f"Prophet + Easter {cal_means['Prophet + Easter']:.2f}% "
-             f"vs Holt-Winters {cal_means['Holt-Winters']:.2f}% (3-fold average) — **wins**, thanks to one holiday"},
-            {"level": "chain total (1 series)", "result": f"XGBoost {F.forecast_metrics(test, trees['XGBoost'])['MAPE']:.2f}% "
-             f"vs same-week-last-year {baseline_mape:.2f}% — **loses**: too few rows"},
-            {"level": "per store (45 series)", "result": f"XGBoost {scores['XGBoost (one model)']['MAPE']:.2f}% vs "
-             f"{scores['seasonal naive (t-52)']['MAPE']:.2f}% — **wins**, as one fast model"}]
+    one_window = f"last {len(test)} weeks (one window)"
+    rows = [{"Level": "Chain total", "Series": "1", "Tested on": "3 folds, averaged",
+             "Result": f"Prophet + Easter {cal_means['Prophet + Easter']:.2f}% vs Holt-Winters "
+                       f"{cal_means['Holt-Winters']:.2f}% — **wins**, thanks to one holiday"},
+            {"Level": "Chain total", "Series": "1", "Tested on": one_window,
+             "Result": f"XGBoost {F.forecast_metrics(test, trees['XGBoost'])['MAPE']:.2f}% vs same-week-last-year "
+                       f"{baseline_mape:.2f}% — **loses**: too few rows"},
+            {"Level": "Per store", "Series": "45", "Tested on": one_window,
+             "Result": f"XGBoost {scores['XGBoost (one model)']['MAPE']:.2f}% vs same-week-last-year "
+                       f"{scores['seasonal naive (t-52)']['MAPE']:.2f}% — **wins**, as one fast model"}]
     if "departments" in st.session_state:
         dep = st.session_state["departments"]
-        rows.append({"level": f"per department ({dep['series']:,} series)",
-                     "result": f"MAPE {dep['model']['MAPE']:.0f}% — **the metric breaks**, not the model"})
+        rows.append({"Level": "Per department", "Series": f"{dep['series']:,}", "Tested on": one_window,
+                     "Result": f"MAPE {dep['model']['MAPE']:.0f}% — **the metric breaks**, not the model"})
     else:
-        rows.append({"level": "per department (~3,300 series)", "result": "run it on the *Grain & metrics* tab"})
-    st.table(pd.DataFrame(rows).set_index("level"))
+        rows.append({"Level": "Per department", "Series": "~3,300", "Tested on": one_window,
+                     "Result": "run it on the *Grain & metrics* tab"})
+    st.table(pd.DataFrame(rows), hide_index=True)
+    st.caption("Read it top to bottom: from one big series to thousands of small ones. The first row is the "
+               "fairest test (three windows); the others use the single held-out quarter, so small gaps there "
+               "could be luck.")
 
     st.markdown(
         f"""
@@ -569,9 +583,12 @@ with tab_verdict:
         "with 8,760 values a year. Our chain total has 143. A network with more parameters than data points "
         "memorises the past and forecasts noise. Knowing when *not* to use a tool is part of the skill."
     )
-    with st.container(border=True):
-        st.markdown(
-            """
+    show_sibling_script("forecasting.py", "📄 The full sibling script: predictions/forecasting.py")
+
+st.divider()
+with st.container(border=True):
+    st.markdown(
+        """
 🎯 **What to remember**
 - **Start simple.** "Same week last year" is free — every model has to beat it to earn its place.
 - **Your business knowledge is a feature.** Telling Prophet where Easter falls gave the lowest error on the
@@ -579,5 +596,4 @@ with tab_verdict:
 - **Match the tool, the level and the metric to the data:** Prophet to *explain* a forecast, XGBoost for
   *many* series — and the same model can look broken or brilliant depending on level and metric.
 """
-        )
-    show_sibling_script("forecasting.py", "📄 The full sibling script: predictions/forecasting.py")
+    )

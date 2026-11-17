@@ -112,6 +112,14 @@ train, test = F.split_series(sales, test_weeks=F.TEST_WEEKS)
 # Header
 # ===========================================================================
 st.title("📈 Time Series — can this series be forecast at all?")
+with st.container(border=True):
+    st.markdown(
+        """
+        💼 **Where you'll use this** — planning next quarter's revenue or headcount, ordering stock
+        before the Christmas peak, setting realistic sales targets, or spotting when this week is
+        *unusually* low. Every one of those starts with the questions on this page.
+        """
+    )
 st.markdown(
     """
     **"After all our campaigns, offers and promotions, revenue has to grow. We need to know
@@ -122,14 +130,6 @@ st.markdown(
     the answer. Every tab shows the **real code** from the sibling `predictions/` repo.
     """
 )
-with st.container(border=True):
-    st.markdown(
-        """
-        💼 **Where you'll use this** — planning next quarter's revenue or headcount, ordering stock
-        before the Christmas peak, setting realistic sales targets, or spotting when this week is
-        *unusually* low. Every one of those starts with the questions on this page.
-        """
-    )
 st.caption(
     f"**The data:** weekly sales of a retail chain, all stores summed into one number per week — "
     f"{len(sales)} weeks from {sales.index[0].date()} to {sales.index[-1].date()}."
@@ -152,7 +152,7 @@ tab_overview, tab_parts, tab_stat, tab_split, tab_models, tab_cv, tab_compare = 
 # ===========================================================================
 with tab_overview:
     st.subheader("The order of work")
-    st.graphviz_chart(F.timeseries_flow_dot())
+    st.graphviz_chart(F.timeseries_flow_dot(), width="stretch")
 
     fig = go.Figure(go.Scatter(x=sales.index, y=sales.values, mode="lines", line=dict(color=BLUE)))
     fig.update_layout(height=320, title="<b>Weekly chain sales</b>", yaxis_title="weekly sales",
@@ -196,7 +196,7 @@ with tab_overview:
     st.dataframe(
         pd.DataFrame(
             {
-                "Walmart chain sales": [f"{report['cycles']:.2f}", f"{report['trend_r_squared']:.3f}",
+                "Retail chain sales": [f"{report['cycles']:.2f}", f"{report['trend_r_squared']:.3f}",
                                         f"{report['seasonal_strength']:.2f}"],
                 "Weekly CO₂ since 1980": [f"{control_report['cycles']:.1f}",
                                           f"{control_report['trend_r_squared']:.3f}",
@@ -423,9 +423,9 @@ with tab_split:
     st.subheader("Four ways to average the same errors — they disagree on purpose")
     example = F.forecast_metrics(test, F.seasonal_naive_forecast(train, len(test)))
     c = st.columns(5)
-    c[0].metric("MAE", f"{example['MAE']:,.0f}", help="average miss, in euros")
-    c[1].metric("MSE", f"{example['MSE']:.3g}", help="squared euros — no interpretable unit")
-    c[2].metric("RMSE", f"{example['RMSE']:,.0f}", help="back in euros, big misses count more")
+    c[0].metric("MAE", F.money(example['MAE']), help="average miss, in euros")
+    c[1].metric("MSE", F.big_number(example['MSE']), help="squared euros — no interpretable unit")
+    c[2].metric("RMSE", F.money(example['RMSE']), help="back in euros, big misses count more")
     c[3].metric("MAPE", f"{example['MAPE']:.2f}%", help="average miss as a percentage")
     c[4].metric("R²", f"{example['R2']:.2f}", help="share of variance explained")
     st.markdown(
@@ -491,7 +491,7 @@ with still nothing fitted. Keep this idea in mind — it is what Holt-Winters' *
     st.divider()
     st.subheader("Exponential smoothing — and why α barely matters here")
     sweep = F.smoothing_sweep(sales)
-    st.dataframe(sweep.style.format({"alpha": "{:.1f}", "MAE": "{:,.0f}", "MAPE": "{:.2f}%"}),
+    st.dataframe(sweep.style.format({"alpha": "{:.1f}", "MAE": F.money, "MAPE": "{:.2f}%"}),
                  width="stretch", hide_index=True)
     st.caption(
         "Three very different α, barely a tenth of a percent apart. That *is* the result: this series is "
@@ -592,12 +592,13 @@ with tab_cv:
     )
     folds = F.rolling_origin_splits(sales, n_folds=3, horizon=F.TEST_WEEKS)
     fig = go.Figure()
+    DAY_MS = 86_400_000  # a bar on a date axis measures its length in milliseconds
     for i, (fold_train, fold_test) in enumerate(folds):
-        label = f"fold {i}"
-        fig.add_trace(go.Bar(y=[label], x=[(fold_train.index[-1] - fold_train.index[0]).days],
+        label = f"fold {i + 1}"
+        fig.add_trace(go.Bar(y=[label], x=[(fold_train.index[-1] - fold_train.index[0]).days * DAY_MS],
                              base=[fold_train.index[0]], orientation="h", marker_color=BLUE,
                              name="train", showlegend=i == 0))
-        fig.add_trace(go.Bar(y=[label], x=[(fold_test.index[-1] - fold_test.index[0]).days + 7],
+        fig.add_trace(go.Bar(y=[label], x=[((fold_test.index[-1] - fold_test.index[0]).days + 7) * DAY_MS],
                              base=[fold_test.index[0]], orientation="h", marker_color=ORANGE,
                              name="test", showlegend=i == 0))
     fig.update_layout(height=220, barmode="overlay", xaxis_type="date", margin=dict(t=10),
@@ -690,7 +691,7 @@ with tab_compare:
         x=list(test.index) + list(test.index[::-1]),
         y=list(hw_values * (1 + band / 100)) + list((hw_values * (1 - band / 100))[::-1]),
         fill="toself", fillcolor="rgba(46, 204, 113, 0.18)", line=dict(width=0), hoverinfo="skip",
-        name=f"Holt-Winters ±{band:.1f}% (8 of 10 past weeks)"))
+        name=f"Holt-Winters ±{band:.1f}% (80% of past weeks)"))
     fig.add_trace(go.Scatter(x=test.index, y=test.values, mode="lines+markers", name="actual",
                              line=dict(color="black", width=3)))
     palette = {"seasonal naive (t-52)": ORANGE, F.GROWTH_LABEL: "#f4b183", "Holt-Winters (ETS)": GREEN,
@@ -705,7 +706,8 @@ with tab_compare:
     st.plotly_chart(fig, width="stretch")
     inside = float(np.mean(np.abs(100 * (test.values - hw_values) / test.values) <= band))
     st.markdown(
-        f"**How far off to expect.** In the cross-validation folds, 8 of 10 Holt-Winters weeks missed by less "
+        f"**How far off to expect.** In the cross-validation folds, Holt-Winters forecast "
+        f"{len(cv['errors']['Holt-Winters'])} weeks; 80% of them — four weeks in five — missed by less "
         f"than **±{band:.1f}%** — about ±{F.money(band / 100 * test.mean())} on a typical week. That is the "
         f"green band; in this quarter {inside:.0%} of the actual weeks fall inside it. It is a planning range, "
         "not a guarantee — and it comes from quiet quarters only, so do not stretch it over Christmas."
@@ -714,7 +716,7 @@ with tab_compare:
 
     st.markdown("**All models on the single held-out quarter**")
     st.dataframe(
-        table.style.format({"MAE": "{:,.0f}", "MSE": "{:.3g}", "RMSE": "{:,.0f}", "MAPE": "{:.2f}%", "R2": "{:.2f}"}),
+        table.style.format({"MAE": F.money, "MSE": F.big_number, "RMSE": F.money, "MAPE": "{:.2f}%", "R2": "{:.2f}"}),
         width="stretch", hide_index=True,
     )
     if "sarima" not in st.session_state:
@@ -728,8 +730,9 @@ with tab_compare:
         "Below: the hardest fold from cross-validation."
     )
     events = F.calendar_events(sales.index, F.WALMART_HOLIDAYS)
-    hardest = int(scores.loc[scores[cv_models].mean(axis=1).idxmax(), "fold"])
-    fold = cv["forecasts"][hardest]
+    hardest_row = int(scores[cv_models].mean(axis=1).to_numpy().argmax())  # position, not the fold's label
+    hardest = int(scores["fold"].iloc[hardest_row])
+    fold = cv["forecasts"][hardest_row]
     miss_model = st.radio("Model", ["seasonal naive", "Holt-Winters"], horizontal=True, key="miss_model")
     misses = F.explain_misses(fold["test"], fold["predictions"][miss_model], events)
     misses["label"] = misses["event this year"].where(
@@ -753,7 +756,7 @@ with tab_compare:
         "built on *the same week last year* copies an ordinary week into this year's Easter (too low) and last "
         "year's Easter peak into an ordinary week (too high). Holt-Winters makes the same two mistakes — it has "
         "learned *week 14 of the year*, not *the week before Easter*. The fix is a holiday feature that knows "
-        "where Easter falls. Walmart's official holiday list does not include it — the **Forecasting** page "
+        "where Easter falls. The chain's official holiday list does not include it — the **Forecasting** page "
         "adds it to Prophet and measures what that is worth."
     )
     st.caption(
@@ -795,9 +798,12 @@ with tab_compare:
 
 """
     )
-    with st.container(border=True):
-        st.markdown(
-            """
+    show_sibling_script("timeseries.py", "📄 The full sibling script: predictions/timeseries.py")
+
+st.divider()
+with st.container(border=True):
+    st.markdown(
+        """
 🎯 **What to remember**
 - **Check the data before the model.** Two numbers — how many seasons of history, and whether there
   is a real trend — told us most of what the models would later find.
@@ -807,5 +813,4 @@ with tab_compare:
   a forecast you can explain is one a planner can trust. The band says how far off to expect, but
   not at Christmas, which this data cannot test.
 """
-        )
-    show_sibling_script("timeseries.py", "📄 The full sibling script: predictions/timeseries.py")
+    )

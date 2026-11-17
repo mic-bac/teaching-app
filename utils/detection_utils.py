@@ -49,6 +49,19 @@ def load_results(results_dir: Path = RESULTS) -> dict | None:
     return json.loads(path.read_text())
 
 
+# The class name in the training files is short and code-like; students read the dish.
+DISPLAY_LABELS = {"spaghetti_bolo": "spaghetti bolognese"}
+
+
+def things_seen(boxes: pd.DataFrame) -> str:
+    """The labels in one photo's boxes as a phrase: ``a *bowl*, a *spoon* or a *person*``."""
+    labels = list(dict.fromkeys(boxes.sort_values("confidence", ascending=False)["label"]))
+    if not labels:
+        return "nothing it is sure enough about"
+    words = [f"a *{label}*" for label in labels]
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + f" or {words[-1]}"
+
+
 def detections_frame(results: dict, model: str) -> pd.DataFrame:
     """Every box one model found, one row per box (pixels, top-left origin)."""
     rows = []
@@ -56,7 +69,7 @@ def detections_frame(results: dict, model: str) -> pd.DataFrame:
         for det in entry["detections"]:
             x1, y1, x2, y2 = det["box"]
             rows.append({
-                "image": image, "label": det["label"], "confidence": det["confidence"],
+                "image": image, "label": DISPLAY_LABELS.get(det["label"], det["label"]), "confidence": det["confidence"],
                 "x1": x1, "y1": y1, "x2": x2, "y2": y2,
             })
     columns = ["image", "label", "confidence", "x1", "y1", "x2", "y2"]
