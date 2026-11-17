@@ -27,7 +27,7 @@ from sklearn.model_selection import train_test_split
 from utils import recommender_utils as R
 from utils.teaching import source_of
 
-st.set_page_config(page_title="Recommender Systems", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Recommender Systems", layout="wide", page_icon="🛒")
 
 ROOT = Path(__file__).resolve().parents[1]
 SIBLING = ROOT / "recommender"
@@ -158,7 +158,15 @@ def cached_itemsets(min_support: float):
 # ===========================================================================
 # Page header
 # ===========================================================================
-st.title("🎯 Recommender Systems")
+st.title("🛒 Recommender Systems — what should we suggest next?")
+with st.container(border=True):
+    st.markdown(
+        """
+💼 **Where you'll use this** — "customers also bought" in a web shop, next-best-offer in a newsletter,
+cross-selling at the checkout, or suggesting the right article, course or product to an internal user.
+Recommenders quietly drive a large share of online revenue.
+"""
+    )
 
 st.markdown(
     """
@@ -173,20 +181,12 @@ dataset you can poke at:
 Every tab shows the **real code** that produces the result, not a slide summary.
 """
 )
-with st.container(border=True):
-    st.markdown(
-        """
-💼 **Where you'll use this** — "customers also bought" in a web shop, next-best-offer in a newsletter,
-cross-selling at the checkout, or suggesting the right article, course or product to an internal user.
-Recommenders quietly drive a large share of online revenue.
-"""
-    )
 
 tab_overview, tab_cbf, tab_nb, tab_mf, tab_ar = st.tabs(
     [
         "🧭 Overview",
         "🎬 Content-Based",
-        "👥 Collaborative — Neighborhood",
+        "👥 Collaborative — Neighbourhood",
         "🔢 Collaborative — Matrix Factorization",
         "🛒 Association Rules",
     ]
@@ -237,7 +237,7 @@ what they need to get started.
     )
     st.caption(
         "This page follows the lecture: content-based → collaborative "
-        "(neighborhood, then bias-corrected matrix factorization) → association rules."
+        "(neighbourhood, then bias-corrected matrix factorization) → association rules."
     )
 
 # ===========================================================================
@@ -276,6 +276,8 @@ involved, so this works even for brand-new movies.
             width="stretch",
             hide_index=True,
         )
+        identical = int((movies["genres"].map(R.genre_set) == R.genre_set(choice_genres)).sum()) - 1
+        st.markdown(R.tie_reading(recs, choice, identical))
         st.caption(
             "**How to read it:** similarity **1.000** means exactly the same genres. Missing one "
             "genre costs more when that genre is rare. For *Toy Story*, a movie without "
@@ -291,14 +293,14 @@ involved, so this works even for brand-new movies.
         )
 
     st.divider()
-    st.subheader("Build a taste profile from several favorites")
+    st.subheader("Build a taste profile from several favourites")
     st.markdown(
         "Real users like more than one thing. We can average several movies' genre "
         "vectors — **weighted** by how much you like each — into one *profile* vector "
         "and recommend against that."
     )
     faves = st.multiselect(
-        "Your favorite movies",
+        "Your favourite movies",
         titles,
         default=[t for t in ["Toy Story (1995)", "Jumanji (1995)"] if t in titles],
     )
@@ -318,8 +320,9 @@ involved, so this works even for brand-new movies.
                 width="stretch",
                 hide_index=True,
             )
+            st.markdown(R.profile_reading(profile_recs, faves, movies))
     else:
-        st.info("Pick at least one favorite to build a profile.")
+        st.info("Pick at least one favourite to build a profile.")
 
     with st.expander("🗺️ Show a 2D genre map (PCA of the TF-IDF vectors)"):
         st.markdown(
@@ -372,11 +375,11 @@ involved, so this works even for brand-new movies.
 # COLLABORATIVE — NEIGHBORHOOD TAB
 # ===========================================================================
 with tab_nb:
-    st.header("Collaborative Filtering — Neighborhood methods")
+    st.header("Collaborative Filtering — Neighbourhood methods")
     st.markdown(
         """
-Now we ignore item features entirely and learn from **ratings**. Neighborhood
-methods find the nearest *neighbors* by cosine similarity:
+Now we ignore item features entirely and learn from **ratings**. Neighbourhood
+methods find the nearest *neighbours* by cosine similarity:
 
 - **User-based** — find users who rate like you, recommend what *they* liked.
 - **Item-based** — find items rated similarly by the same people (Amazon's
@@ -395,7 +398,7 @@ methods find the nearest *neighbors* by cosine similarity:
         st.subheader("👤 User-based")
         uid = st.selectbox("Pick a user", list(user_item.index), index=0)
         ub = R.get_user_based_recommendations(uid, user_item, user_sim)
-        st.markdown("**Recommended for this user (weighted by neighbor similarity):**")
+        st.markdown("**Recommended for this user (weighted by neighbour similarity):**")
         st.dataframe(
             ub.reset_index().rename(
                 columns={"title": "movie", "index": "movie", "neighbors_who_rated": "raters"}
@@ -433,6 +436,7 @@ methods find the nearest *neighbors* by cosine similarity:
                 width="stretch",
                 hide_index=True,
             )
+            st.caption(R.item_reading(ib, movie))
 
     show_source(R.get_user_based_recommendations, "🐍 User-based recommendations (weighted)")
     show_source(R.get_item_based_recommendations, "🐍 Item-based recommendations")
@@ -442,7 +446,7 @@ methods find the nearest *neighbors* by cosine similarity:
 # COLLABORATIVE — MATRIX FACTORIZATION TAB
 # ===========================================================================
 with tab_mf:
-    st.header("Collaborative Filtering — Matrix Completion")
+    st.header("Collaborative Filtering — Matrix Factorization")
     _, train, test, u2i, i2i, i2it = cached_encoded()
     ratings = cached_ratings()
     movies = cached_movies()
@@ -457,7 +461,7 @@ movies. Most cells are empty — nobody rates everything. *Matrix completion* me
 empty cells**. The movies a user would rate highest become their recommendations.
 """
     )
-    st.dataframe(grid.style.format("{:.1f}", na_rep="?"), width="stretch")
+    st.table(grid.style.format("{:.1f}", na_rep="?"))
     st.markdown(
         """
 We build the prediction in two steps and grade each one the same way: hide **25 %** of the
@@ -470,14 +474,15 @@ are. That error is the **RMSE** — *"on average, off by this many stars"*. Lowe
     st.subheader("Step 1 · Bias-corrected baseline")
     st.markdown(
         r"""
-The simplest sensible guess corrects for two biases:
-
-$$\hat{r}(u,i) = \mu + b_u + b_i$$
-
-In words: **predicted rating = the average rating + "this user rates generously (or
-strictly)" + "this movie is loved (or panned)"**. Pick a user and a movie to see the pieces:
+The simplest sensible guess corrects for two biases: **predicted rating = the average
+rating + "this user rates generously (or strictly)" + "this movie is loved (or panned)"**.
+Pick a user and a movie to see the pieces:
 """
     )
+    with st.expander("🔎 The maths, if you're curious"):
+        st.latex(r"\hat{r}(u,i) = \mu + b_u + b_i")
+        st.markdown("μ = the average of all ratings, bᵤ = user *u*'s bias, bᵢ = movie *i*'s bias. "
+                    "Both biases are learned so that the predictions match the known ratings as closely as possible.")
     c1, c2 = st.columns(2)
     demo_user = c1.selectbox("User", list(u2i.keys()), index=0, key="bias_user")
     movie_titles = sorted(movies["title"])
@@ -500,7 +505,7 @@ strictly)" + "this movie is loved (or panned)"**. Pick a user and a movie to see
     st.markdown(
         f"**Grade:** always guessing the average would be off by **{mean_rmse:.2f}** stars; the "
         f"baseline is off by **{base_rmse:.2f}**. A big step for two simple corrections. "
-        "**Its weakness:** μ and bᵤ are the same for every movie of one user, so only bᵢ decides "
+        "**Its weakness:** the average and the user's bias are the same for every movie, so only the movie's bias decides "
         "the *order* — every user gets **the same list** of recommendations."
     )
 
@@ -511,21 +516,25 @@ strictly)" + "this movie is loved (or panned)"**. Pick a user and a movie to see
     st.markdown(
         r"""
 Matrix factorization adds what the baseline lacks — **individual taste**:
-
-$$\hat{r}(u,i) = \mu + b_u + b_i + p_u \cdot q_i$$
+**predicted rating = the baseline from step 1 + a taste match** between user and movie.
 
 How it learns, step by step:
 
-1. **Start:** give every user and every movie 20 random *taste numbers* (pᵤ and qᵢ).
-2. **Guess:** for one known rating, predict it with the formula above.
+1. **Start:** give every user and every movie 20 random *taste numbers*.
+2. **Guess:** for one known rating, predict it: baseline + taste match.
 3. **Nudge:** compare with the real rating and move the numbers a little to shrink the error.
 4. **Repeat** for every known rating — one full pass is an *epoch* — many times over.
 
 Nobody tells the model what the 20 numbers mean. They end up encoding things like
-*action-ness* or *for-kids-ness*, because that is what explains who likes what. The term
-**pᵤ·qᵢ** is the **taste match**: positive when the user's taste fits the movie, negative when not.
+*action-ness* or *for-kids-ness*, because that is what explains who likes what. The
+taste match is **positive when the user's taste fits the movie, negative when not**.
 """
     )
+    with st.expander("🔎 The maths, if you're curious"):
+        st.latex(r"\hat{r}(u,i) = \mu + b_u + b_i + p_u \cdot q_i")
+        st.markdown("pᵤ and qᵢ are the 20 taste numbers of user *u* and movie *i*; their dot product "
+                    "pᵤ·qᵢ (multiply pair by pair, then add up) is the taste match. Each nudge is one step "
+                    "of *stochastic gradient descent*.")
 
     epochs = st.slider("Training epochs", 5, 30, 20, step=5)
     if st.button("🚀 Train the model"):
@@ -544,6 +553,7 @@ Nobody tells the model what the 20 numbers mean. They end up encoding things lik
         with st.spinner("Running SGD over the observed ratings…"):
             model.fit(train, on_epoch_end=_on_epoch)
         progress.empty()
+        chart_ph.empty()  # the live chart is replaced by the final one below
         st.session_state["mf_model"] = model
         st.session_state["mf_history"] = pd.DataFrame(history).set_index("epoch")
         st.session_state["mf_test_rmse"] = history[-1]["test (hidden ratings)"]
@@ -554,7 +564,9 @@ Nobody tells the model what the 20 numbers mean. They end up encoding things lik
         history = st.session_state["mf_history"]
 
         st.markdown("#### 1 · Accuracy — did the taste numbers help?")
-        st.line_chart(history)
+        # train red, test blue, baseline grey — three lines that must be told apart at a glance
+        st.line_chart(history, color=["#c62828", "#1565c0", "#9e9e9e"],
+                      x_label="epoch", y_label="RMSE (stars off)")
         beats = history.index[history["test (hidden ratings)"] < base_rmse]
         st.caption(
             "**How to read it:** the training error keeps falling — the model gets ever better at "
@@ -567,9 +579,9 @@ Nobody tells the model what the 20 numbers mean. They end up encoding things lik
         cbar.bar_chart(
             pd.DataFrame(
                 {"test RMSE (stars off)": [mean_rmse, base_rmse, test_rmse]},
-                index=["Always the average", "Step 1 · Baseline", "Step 2 · Factorization"],
+                index=["Average", "Baseline", "Factorization"],
             ),
-            sort=False,
+            sort=False, horizontal=True,  # horizontal, so the three names are readable
         )
         cnum.metric("Factorization test RMSE", f"{test_rmse:.3f}", f"{test_rmse - base_rmse:+.3f} vs baseline",
                     delta_color="inverse")
@@ -772,9 +784,10 @@ support*), then turns those into rules and keeps the reliable ones (*minimum con
     show_source(R.get_basket_recommendations, "🐍 Turning rules into recommendations")
     show_sibling_script("association_rule_mining.py", "📄 The full sibling script")
 
-    with st.container(border=True):
-        st.markdown(
-            """
+st.divider()
+with st.container(border=True):
+    st.markdown(
+        """
 🎯 **What to remember**
 - **Three data sources, three methods:** item descriptions → content-based, ratings →
   collaborative filtering, shopping baskets → association rules.
@@ -782,4 +795,4 @@ support*), then turns those into rules and keeps the reliable ones (*minimum con
   guards like *"at least 5 neighbours"* or *"lift > 1"* keep it honest.
 - **Popular is not the same as related** — lift is the number that tells them apart.
 """
-        )
+    )

@@ -64,6 +64,13 @@ try:  # pragma: no cover - exercised by the missing-sibling path
     metrics_table = tc.metrics_table
     naive_forecast = tc.naive_forecast
     seasonal_naive_forecast = tc.seasonal_naive_forecast
+    seasonal_naive_growth_forecast = tc.seasonal_naive_growth_forecast
+    easter_weeks = tc.easter_weeks
+    calendar_events = tc.calendar_events
+    explain_misses = tc.explain_misses
+    cv_interval = tc.cv_interval
+    with_easter = tc.with_easter
+    holt_winters_parts = fm.holt_winters_parts
     simple_exponential_smoothing = tc.simple_exponential_smoothing
     fit_ets = fm.fit_ets
     fit_sarima = fm.fit_sarima
@@ -169,12 +176,37 @@ def sarima_label() -> str:
     return f"SARIMA({','.join(map(str, order))})({','.join(map(str, seasonal))})"
 
 
+GROWTH_LABEL = "seasonal naive × growth"
+
+
 def baseline_forecasts(train: pd.Series, horizon: int) -> dict[str, np.ndarray]:
-    """The three zero-parameter forecasts every model has to beat."""
+    """The zero-parameter forecasts every model has to beat, plus the one-number fix.
+
+    The fourth is "same week last year × recent growth" — still no fitting, just
+    one ratio — the explainable step between the baseline and Holt-Winters.
+    """
     return {
         "naive (last value)": naive_forecast(train, horizon),
         "seasonal naive (t-52)": seasonal_naive_forecast(train, horizon),
         "mean of history": np.repeat(train.mean(), horizon),
+        GROWTH_LABEL: seasonal_naive_growth_forecast(train, horizon),
+    }
+
+
+def growth_example(train: pd.Series, window: int | None = None) -> dict:
+    """The growth factor's arithmetic, for the first forecast week.
+
+    Mirrors ``seasonal_naive_growth_forecast`` step by step, so the page can show
+    the napkin calculation with real numbers.
+    """
+    window = window or TEST_WEEKS
+    recent = float(train.iloc[-window:].sum())
+    year_before = float(train.iloc[-window - SEASONAL_PERIOD : -SEASONAL_PERIOD].sum())
+    copied = float(train.iloc[len(train) - SEASONAL_PERIOD])
+    return {
+        "window": window, "recent": recent, "year_before": year_before,
+        "growth": recent / year_before, "copied_week": train.index[len(train) - SEASONAL_PERIOD],
+        "copied": copied, "forecast": copied * recent / year_before,
     }
 
 
@@ -192,27 +224,46 @@ def smoothing_sweep(sales: pd.Series, alphas=(0.2, 0.4, 0.8)) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def cross_validate(sales: pd.Series, n_folds: int = 3, horizon: int | None = None) -> pd.DataFrame:
-    """Rolling-origin CV of the seasonal-naive baseline and Holt-Winters.
+CV_MODELS = ["seasonal naive", "naive × growth", "Holt-Winters", "SARIMA"]
 
-    One row per fold: training length, test window, and the MAPE of both. The
-    training window only ever grows, so no fold predicts a week an earlier fold
-    trained on.
+
+def cross_validate(
+    sales: pd.Series, n_folds: int = 3, horizon: int | None = None, include_sarima: bool = False
+) -> dict:
+    """Rolling-origin CV of every forecast in the lesson — the trustworthy comparison.
+
+    Mirrors ``timeseries.py`` section 12. Returns:
+
+    * ``scores`` — one row per fold: test window and each model's MAPE;
+    * ``errors`` — every weekly % miss per model (``(actual - forecast) / actual``),
+      which ``cv_interval`` turns into an honest ± band;
+    * ``forecasts`` — per fold, the test weeks and each model's forecast, so the
+      page can read the misses.
+
+    SARIMA is optional because it costs ~20 s over three folds; the rest is instant.
     """
     horizon = horizon or TEST_WEEKS
-    rows = []
+    models = {
+        "seasonal naive": lambda tr, h: seasonal_naive_forecast(tr, h),
+        "naive × growth": lambda tr, h: seasonal_naive_growth_forecast(tr, h),
+        "Holt-Winters": lambda tr, h: fit_ets(tr, h)[1].to_numpy(),
+    }
+    if include_sarima:
+        models["SARIMA"] = lambda tr, h: fit_sarima(tr, h)[1].to_numpy()
+    rows, errors, forecasts = [], {name: [] for name in models}, []
     for i, (fold_train, fold_test) in enumerate(rolling_origin_splits(sales, n_folds=n_folds, horizon=horizon)):
-        baseline = seasonal_naive_forecast(fold_train, len(fold_test))
-        _, ets = fit_ets(fold_train, len(fold_test))
-        rows.append({
-            "fold": i,
-            "train_weeks": len(fold_train),
-            "test_from": fold_test.index[0].date(),
-            "test_to": fold_test.index[-1].date(),
-            "seasonal naive MAPE": forecast_metrics(fold_test, baseline)["MAPE"],
-            "Holt-Winters MAPE": forecast_metrics(fold_test, ets.values)["MAPE"],
-        })
-    return pd.DataFrame(rows)
+        row = {"fold": i + 1, "train_weeks": len(fold_train),
+               "test_from": fold_test.index[0].date(), "test_to": fold_test.index[-1].date()}
+        predictions = {}
+        for name, forecast_fn in models.items():
+            prediction = np.asarray(forecast_fn(fold_train, len(fold_test)), dtype=float)
+            predictions[name] = prediction
+            row[name] = forecast_metrics(fold_test, prediction)["MAPE"]
+            errors[name].extend(100 * (fold_test.to_numpy() - prediction) / fold_test.to_numpy())
+        rows.append(row)
+        forecasts.append({"test": fold_test, "predictions": predictions})
+    return {"scores": pd.DataFrame(rows), "errors": errors, "forecasts": forecasts,
+            "models": list(models)}
 
 
 def christmas_check(sales: pd.Series) -> dict:
@@ -254,7 +305,7 @@ def timeseries_flow_dot() -> str:
     return """
 digraph ts {
   rankdir=LR;
-  node [shape=box style="rounded,filled" fontname="Helvetica" fontsize=10 fillcolor="#ECEFF1"];
+  node [shape=box style="rounded,filled" fontname="Helvetica" fontsize=14 fillcolor="#ECEFF1"];
   edge [color="#616161"];
   data   [label="Weekly chain sales\\n143 weeks" fillcolor="#BBDEFB"];
   report [label="Forecastable?\\nsuitability report" fillcolor="#FFF9C4"];
@@ -305,6 +356,65 @@ def prophet_run(train: pd.Series, horizon: int, changepoint_prior_scale: float =
         "components": prophet_components(model, forecast),
         "trend_drift_pct": 100 * (trend.loc[future.iloc[-1]] / trend.loc[future.iloc[0]] - 1),
     }
+
+
+def prophet_calendar_cv(sales: pd.Series, n_folds: int = 3, horizon: int | None = None) -> dict:
+    """Which holiday calendar helps Prophet? Mirrors ``forecasting.py`` section 5.
+
+    Three calendars across the rolling-origin folds — Walmart's four holidays,
+    plus the US public calendar, or plus Easter — with Holt-Winters (the
+    previous lesson's best) as the bar. Also returns the miss on the Easter week
+    inside the first fold, with and without Easter in the calendar: the one
+    number that shows *why* the calendar matters.
+    """
+    horizon = horizon or TEST_WEEKS
+    easter = with_easter(WALMART_HOLIDAYS, sales.index[0], sales.index[-1] + pd.Timedelta(weeks=60))
+    calendars = {
+        "Prophet": (WALMART_HOLIDAYS, None),
+        "Prophet + US calendar": (WALMART_HOLIDAYS, "US"),
+        "Prophet + Easter": (easter, None),
+    }
+    events = calendar_events(sales.index, WALMART_HOLIDAYS)
+    scores = {name: [] for name in [*calendars, "Holt-Winters"]}
+    easter_week, easter_miss = None, {}
+    for i, (fold_train, fold_test) in enumerate(rolling_origin_splits(sales, n_folds=n_folds, horizon=horizon)):
+        for name, (calendar, country) in calendars.items():
+            _, forecast = fit_prophet(fold_train, len(fold_test), holidays=calendar, country_holidays=country)
+            prediction = prophet_forecast_only(forecast, fold_test.index)["yhat"].to_numpy()
+            scores[name].append(forecast_metrics(fold_test, prediction)["MAPE"])
+            if i == 0:
+                misses = explain_misses(fold_test, prediction, events)
+                row = misses[misses["event this year"] == "Easter"]
+                if not row.empty:
+                    easter_week, easter_miss[name] = row["week"].iloc[0], float(row["miss %"].iloc[0])
+        scores["Holt-Winters"].append(
+            forecast_metrics(fold_test, fit_ets(fold_train, len(fold_test))[1].to_numpy())["MAPE"])
+    table = pd.DataFrame(
+        [{"model": name, **{f"fold {i}": v for i, v in enumerate(values, start=1)}, "mean": float(np.mean(values))}
+         for name, values in scores.items()]
+    )
+    return {"scores": table, "easter_week": easter_week, "easter_miss": easter_miss}
+
+
+def prophet_component_reading(components: dict) -> dict:
+    """The biggest numbers in Prophet's parts, ready to be said in euros.
+
+    Prophet is additive, so every component is an amount added to (or taken
+    from) a week's sales — which makes "the season adds €X" literally true.
+    """
+    out = {}
+    if "yearly" in components:
+        yearly = components["yearly"].drop_duplicates("ds").set_index("ds")["yearly"]
+        out["season_peak"] = (yearly.idxmax(), float(yearly.max()))
+        out["season_low"] = (yearly.idxmin(), float(yearly.min()))
+    if "holidays" in components:
+        holidays = components["holidays"].set_index("ds")["holidays"]
+        holidays = holidays[holidays.abs() > 0]
+        if not holidays.empty:
+            out["holiday_peak"] = (holidays.abs().idxmax(), float(holidays.loc[holidays.abs().idxmax()]))
+    trend = components["trend"].set_index("ds")["trend"]
+    out["trend_change"] = float(trend.iloc[-1] - trend.iloc[0])
+    return out
 
 
 def interval_coverage(actual: pd.Series, predicted: pd.DataFrame) -> float:
@@ -379,7 +489,7 @@ def external_features_cv(panel: pd.DataFrame) -> pd.DataFrame:
     for name, columns in [("calendar + lags", PANEL_FEATURES),
                           ("+ temperature, fuel, CPI, unemployment", PANEL_FEATURES + EXTERNAL_FEATURES)]:
         scores = score_panel(panel, columns)
-        rows.append({"feature set": name, **{f"fold {i}": v for i, v in enumerate(scores)}, "mean": np.mean(scores)})
+        rows.append({"feature set": name, **{f"fold {i}": v for i, v in enumerate(scores, start=1)}, "mean": np.mean(scores)})
     return pd.DataFrame(rows)
 
 
@@ -389,7 +499,19 @@ def department_grain(dept_panel: pd.DataFrame) -> dict:
     train, test = split_panel(features, test_weeks=TEST_WEEKS)
     prediction = fit_xgboost(train[DEPT_FEATURES], train["Weekly_Sales"]).predict(test[DEPT_FEATURES])
     summed = test.assign(prediction=prediction).groupby("Date")[["Weekly_Sales", "prediction"]].sum()
+    # One concrete row where MAPE "explodes": a small department week with a big
+    # percentage miss that is tiny in euros. Positive sales only — MAPE skips the rest.
+    small = test.assign(prediction=prediction)
+    small = small[(small["Weekly_Sales"] > 0) & (small["Weekly_Sales"] < 100)]
+    example = None
+    if not small.empty:
+        pct = (small["Weekly_Sales"] - small["prediction"]).abs() / small["Weekly_Sales"]
+        row = small.loc[(pct - 5).abs().idxmin()]  # a typical "~500%" case, not the most extreme
+        example = {"store": int(row["Store"]), "dept": int(row["Dept"]), "date": row["Date"].date(),
+                   "actual": float(row["Weekly_Sales"]), "prediction": float(row["prediction"]),
+                   "pct": float(100 * abs(row["Weekly_Sales"] - row["prediction"]) / row["Weekly_Sales"])}
     return {
+        "example": example,
         "series": features.groupby(["Store", "Dept"]).ngroups,
         "model": forecast_metrics(test["Weekly_Sales"], prediction),
         "baseline": forecast_metrics(test["Weekly_Sales"], test["lag_52"]),
@@ -406,7 +528,7 @@ def detrending_experiment(panel: pd.DataFrame) -> pd.DataFrame:
         for hybrid in (False, True):
             scores = score_panel(panel, columns, hybrid=hybrid)
             rows.append({"features": lags, "model": "trend + XGBoost" if hybrid else "plain XGBoost",
-                         **{f"fold {i}": v for i, v in enumerate(scores)}, "mean": np.mean(scores)})
+                         **{f"fold {i}": v for i, v in enumerate(scores, start=1)}, "mean": np.mean(scores)})
     return pd.DataFrame(rows)
 
 
@@ -425,3 +547,96 @@ def control_detrending() -> dict:
         "plain_mape": forecast_metrics(test["Weekly_Sales"], plain)["MAPE"],
         "hybrid_mape": forecast_metrics(test["Weekly_Sales"], hybrid)["MAPE"],
     }
+
+
+# ===========================================================================
+# Plain-language readings — the numbers, said in a sentence
+# ===========================================================================
+
+
+def money(value: float) -> str:
+    """Weekly sales are tens of millions: say €1.5M, not €1,523,442."""
+    sign = "−" if value < 0 else ""
+    value = abs(value)
+    if value >= 1e6:
+        return f"{sign}€{value / 1e6:,.1f}M"
+    if value >= 1e3:
+        return f"{sign}€{value / 1e3:,.0f}k"
+    return f"{sign}€{value:,.0f}"
+
+
+def big_number(value: float) -> str:
+    """A huge number in words: 1.26e+12 reads as "1.3 trillion".
+
+    MSE squares euros, so on weekly sales of tens of millions it lands in the
+    trillions — scientific notation hides that this size *is* the lesson.
+    """
+    for size, word in ((1e12, "trillion"), (1e9, "billion"), (1e6, "million")):
+        if abs(value) >= size:
+            return f"{value / size:,.1f} {word}"
+    return f"{value:,.0f}"
+
+
+def mape_in_money(mape: float, sales: pd.Series) -> str:
+    """A MAPE as euros on a typical week — what the percentage means for a planner."""
+    typical = float(sales.mean())
+    return (f"{mape:.2f}% of a typical {money(typical)} week is about "
+            f"**{money(mape / 100 * typical)}** off, per week")
+
+
+def report_readings(report: dict) -> dict[str, str]:
+    """One plain sentence under each number of the suitability report."""
+    return {
+        "grid": (f"{report['n']} weeks, one every {report['step_days']} days, no gaps — nothing to "
+                 "repair before modelling." if report["regular_grid"]
+                 else "Gaps or uneven steps — they must be fixed before any model."),
+        "cycles": (f"{report['n']} weeks ÷ 52 = {report['cycles']:.2f} years. Each week-of-the-year "
+                   f"has been seen only {int(report['cycles'])}–{int(report['cycles']) + 1} times."),
+        "trend": (f"{report['trend_pct_per_year']:+.2f}% a year, but p = {report['trend_p_value']:.2f}: "
+                  + ("easily chance — treat it as no trend." if report["trend_p_value"] >= 0.05
+                     else "unlikely to be chance — a real trend.")),
+        "season": (f"On a 0–1 scale: {report['seasonal_strength']:.2f}. Once the slow trend is set "
+                   "aside, almost all of what is left " if report["seasonal_strength"] >= 0.8
+                   else f"On a 0–1 scale: {report['seasonal_strength']:.2f}. Once the slow trend is set "
+                   "aside, only part of what is left ") + "is the pattern that repeats every year.",
+        "stationary": ("The series keeps returning to the same level — no drift to remove."
+                       if report["stationary"] else "The level drifts — models must remove it first."),
+    }
+
+
+def cv_reading(scores: pd.DataFrame, models: list[str]) -> list[str]:
+    """Who wins each fold, and how consistent the overall winner is."""
+    means = scores[models].mean()
+    winner = means.idxmin()
+    fold_winners = scores[models].idxmin(axis=1)
+    lines = [
+        f"**{winner}** has the lowest average error ({means[winner]:.2f}%) and wins "
+        f"{int((fold_winners == winner).sum())} of {len(scores)} folds — a more trustworthy "
+        "verdict than any single test window."
+    ]
+    worst_fold = scores.loc[scores[models].mean(axis=1).idxmax()]
+    lines.append(
+        f"Every model does worst in fold {int(worst_fold['fold'])} ({worst_fold['test_from']} to "
+        f"{worst_fold['test_to']}) — *Reading the misses* on the Comparison tab shows why."
+    )
+    if "SARIMA" in models:
+        close = int(((scores["SARIMA"] - scores["seasonal naive"]).abs() < 0.1).sum())
+        lines.append(
+            f"SARIMA is within 0.1 points of the free baseline in {close} of {len(scores)} folds: its "
+            "seasonal difference *is* \"compare with the same week last year\", so on short history "
+            "it mostly reproduces it."
+        )
+    return lines
+
+
+def misses_reading(misses: pd.DataFrame) -> str:
+    """The biggest misses in one paragraph, naming the calendar event behind each."""
+    explained = misses[misses["why"] != ""]
+    if explained.empty:
+        return ("None of the biggest misses lines up with a holiday — they are mostly the level: "
+                "this year runs a little above or below last year.")
+    parts = []
+    for _, row in explained.iterrows():
+        direction = "too low" if row["miss %"] > 0 else "too high"
+        parts.append(f"week {row['week']}: forecast {abs(row['miss %']):.0f}% {direction} — {row['why']}")
+    return "; ".join(parts) + "."

@@ -1,21 +1,31 @@
 # Teaching App 🎓
 
 A multi-page **Streamlit** app that unifies the teaching lessons from this workspace into
-one interactive tool:
+one interactive tool. The Home page numbers the lessons 1–9 and suggests a path (the data → your
+customers → the future → photos); Survival continues Propensity, and Forecasting continues
+Time Series. Every lesson page has the same frame: **💼 Where you'll use this** right under the
+title, **🎯 What to remember** at the very bottom (outside the tabs, so it is there whichever tab
+is open), every chart and table followed by a reading with its real numbers, and code names
+(`Gender_Male`, `NumWebVisitsMonth`) shown in plain words. Customers, clusters and folds are
+counted from 1.
 
 - **🗄️ Database Basics** — a hands-on relational-database lesson organized into three tabs:
   an **architecture diagram** of the setup (PostgreSQL-in-Docker ← Python/SQLAlchemy, with the
   active backend highlighted), an **Explore & Add Data** tab (schema viewer, seed / remove
   sample-data buttons, insert form, live table, and a `SUM(amount) GROUP BY region` chart — each
   paired with a collapsible box showing the *actual function that runs*), and a **SQL Playground** for running
-  raw queries. Falls back to a local SQLite database automatically if the Postgres container isn't
+  raw queries, where each example is explained line by line in plain English and as the matching
+  Excel step (filter, pivot table, sort). The region chart is read with its numbers (*more sales,
+  or bigger ones?*). Falls back to a local SQLite database automatically if the Postgres container isn't
   running.
 - **⚡ Parallelization** — a "benchmark race" comparing **Serial vs Parallel vs Vectorized**
-  row computations in Python, plus a side-by-side view of the equivalent Python and R code.
-- **🎯 Recommender Systems** — content-based filtering (TF-IDF + cosine similarity),
+  row computations in Python, plus a side-by-side view of the equivalent Python and R code, and a
+  download race (sequential, threads, async, multiprocessing). Every approach has an everyday picture
+  first (checkout tills, ordering pizzas), and the CPU result is scaled to the real 1-million-row file.
+- **🛒 Recommender Systems** — content-based filtering (TF-IDF + cosine similarity),
   collaborative filtering (neighbourhood, a bias baseline, and from-scratch matrix
   factorization trained live), and market-basket **association rules** via Apriori.
-- **🔮 Propensity Models** — look-alike modeling for churn: the observation → buffer →
+- **🎲 Propensity Models** — look-alike modelling for churn: the observation → buffer →
   outcome time design, three model families (logistic regression, XGBoost, neural net),
   stratified cross-validation and grid/randomized search, the metrics imbalanced data
   actually needs (confusion matrix, precision/recall/F1, ROC-AUC, PR-AUC), learning and
@@ -31,11 +41,15 @@ one interactive tool:
 - **📈 Time Series** — *is this series forecastable at all?* A suitability report before any
   model, decomposition and the trend that disappears once sales are deflated by CPI,
   stationarity (ADF) and ACF/PACF, splitting by time and the four error measures (with the
-  lecture's own Excel smoothing example, reproduced by the real code), baselines,
-  Holt-Winters and SARIMA, rolling-origin cross-validation — and why Christmas cannot be
+  lecture's own Excel smoothing example, reproduced by the real code), baselines (incl. "same
+  week last year × growth"), Holt-Winters and what it learned (level, trend, season), SARIMA,
+  rolling-origin cross-validation of every model, a forecast band read off past errors,
+  *reading the misses* against the calendar (Easter moved) — and why Christmas cannot be
   tested with 2.75 seasons of history.
 - **🔮 Forecasting** — *are Prophet and XGBoost worth it here?* Prophet's explainable parts
-  (trend, season, holidays) and the setting that makes forecasts overshoot; XGBoost losing on
+  (trend, season, holidays) and the setting that makes forecasts overshoot; **Easter added to
+  Prophet's calendar** halves the Easter-week miss and gives the lowest error on the chain (the
+  whole US calendar makes it worse); XGBoost losing on
   one short series and winning as one model for 45 stores (forecasting at scale); early
   stopping and overfitting; testing external data; the department level where MAPE breaks;
   and detrending — a fix that helps or hurts depending on the diagnosis.

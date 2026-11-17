@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pytest
 
+from utils import compute_utils, data_generator, io_utils
+from utils import forecasting_utils as F
 from utils import propensity_utils as P
 from utils import recommender_utils as R
 from utils import survival_utils as S
@@ -56,10 +58,44 @@ def model_param(model_name: str, param: str):
     return model.get_params()[f"model__{param}" if hasattr(model, "named_steps") else param]
 
 
+def forecasting(name: str):
+    """A ``forecasting_utils`` function — it only exists when the sibling imports."""
+    if not F.SIBLING_AVAILABLE:
+        pytest.skip("predictions sibling not importable")
+    return getattr(F, name)
+
+
+def page_value(page: str, pattern: str):
+    """A literal the page passes inline (no function default to read it from)."""
+    match = re.search(pattern, (ROOT / page).read_text())
+    assert match, f"pattern {pattern!r} no longer matches {page}"
+    return ast.literal_eval(match.group(1))
+
+
+def source_value(name: str, pattern: str):
+    """A literal inside a forecasting_utils function body."""
+    match = re.search(pattern, inspect.getsource(forecasting(name)))
+    assert match, f"pattern {pattern!r} no longer matches forecasting_utils.{name}"
+    return ast.literal_eval(match.group(1))
+
+
+TS = "predictions/timeseries.py"
+FC = "predictions/forecasting.py"
 PROP = "predictions/propensity.py"
 SURV = "predictions/survival.py"
 CF = "recommender/collaborative_filtering.py"
 AR = "recommender/association_rule_mining.py"
+PAR = "parallelization/parallel/parallel.py"
+IO = "parallelization/parallel/io_concurrency.py"
+DATA = "parallelization/data/create_dataset.py"
+CLTV = "segmentation/cltv.py"
+
+
+def body_value(fn, pattern: str):
+    """A literal inside any util function's body (for values that are not parameters)."""
+    match = re.search(pattern, inspect.getsource(fn))
+    assert match, f"pattern {pattern!r} no longer matches {fn.__name__}"
+    return ast.literal_eval(match.group(1))
 
 # (label, sibling file, regex, recorded sibling value, app value getter, status)
 COUPLINGS = [
@@ -128,6 +164,34 @@ COUPLINGS = [
     # Shorter itemsets keep Apriori fast enough to run on a button press.
     ("recommender: Apriori max_len", AR, r"max_len=(\d+)",
      5, lambda: default(R.run_apriori, "max_len"), "intentional"),
+    # --- time series / forecasting (pages 7 and 8 mirror inline script steps) ---
+    ("timeseries: CV folds", TS, r"folds = tc\.rolling_origin_splits\(sales, n_folds=(\d+)",
+     3, lambda: default(forecasting("cross_validate"), "n_folds"), "same"),
+    ("timeseries: forecast band coverage", TS, r"cv_interval\(cv_errors\[\"Holt-Winters\"\], coverage=([\d.]+)\)",
+     0.8, lambda: page_value("pages/7_Time_Series.py", r"cv_interval\(cv\[\"errors\"\]\[\"Holt-Winters\"\], coverage=([\d.]+)\)"),
+     "same"),
+    ("forecasting: calendar CV folds", FC, r"cv_folds = tc\.rolling_origin_splits\(sales, n_folds=(\d+)",
+     3, lambda: default(forecasting("prophet_calendar_cv"), "n_folds"), "same"),
+    ("forecasting: depth sweep", FC, r"for depth in (\([\d, ]+\)):",
+     (2, 4, 6, 10), lambda: default(forecasting("depth_sweep"), "depths"), "same"),
+    ("forecasting: CO2 test horizon", FC, r"split_panel\(control_features, test_weeks=(\d+)\)",
+     52, lambda: source_value("control_detrending", r"split_panel\(features, test_weeks=(\d+)\)"), "same"),
+    # --- survival: evaluation window and risk strata ------------------------
+    ("survival: evaluation times", SURV, r"np\.linspace\(10, 90, (\d+)\)",
+     9, lambda: default(S.evaluation_window, "n_times"), "same"),
+    ("survival: evaluation percentile range", SURV, r"np\.linspace\((\d+, \d+), \d+\)",
+     (10, 90), lambda: body_value(S.evaluation_window, r"np\.linspace\((\d+, \d+), n_times\)"), "same"),
+    ("survival: risk groups", SURV, r"pd\.qcut\(risk_scores, q=(\d+)",
+     4, lambda: default(S.risk_strata, "n_groups"), "same"),
+    # --- parallelization (re-implemented in compute_utils / io_utils / data_generator) ---
+    ("parallel: simulated work per row", PAR, r"sleep\(([\d.e-]+)\)",
+     0.00001, lambda: body_value(compute_utils.expensive_row_op, r"sleep\(([\d.e-]+)\)"), "same"),
+    ("parallel: worker cap", PAR, r"n_cpu = min\((\d+), n_cpu\)",
+     4, lambda: default(compute_utils.run_parallel, "n_cpu"), "same"),
+    ("parallel: download threads", IO, r"ThreadPoolExecutor\(max_workers=(\d+)\)",
+     5, lambda: default(io_utils.run_threaded, "max_workers"), "same"),
+    ("parallel: dataset columns", DATA, r"def generate_dataset\(rows=[\d_]+, cols=(\d+)",
+     10, lambda: default(data_generator.generate_dataset, "cols"), "same"),
 ]
 
 REGULAR = COUPLINGS
@@ -197,3 +261,26 @@ def test_object_detection_results_were_exported_from_the_notebook_settings():
     for name, key in [("EPOCHS", "epochs"), ("BATCH", "batch"), ("IMG_SIZE", "imgsz")]:
         value = int(re.search(rf"^{name}\s*=\s*(\d+)", source, re.MULTILINE).group(1))
         assert value == settings[key], f"{name}: notebook {value}, exported {settings[key]} — re-run export_results.py"
+
+
+def test_recency_band_mapping_matches_the_sibling():
+    """segmentation_utils.behavioural_retention mirrors cltv.py section 7 line by line.
+
+    The sibling runs it inline in a script (nothing to import), so the three steps
+    that decide which customer gets which band rate are pinned as source fragments.
+    """
+    from utils import segmentation_utils as SEG
+
+    path = ROOT / CLTV
+    if not path.exists():
+        pytest.skip("segmentation sibling not checked out")
+    sibling = path.read_text()
+    app = inspect.getsource(SEG.behavioural_retention)
+    steps = [
+        r'\[0\] \+ \[int\(label\.split\("-"\)\[1\]\.rstrip\("d"\)\) \+ 1 for label in band_retention\.index\]',
+        r"\[-1\] = max\(\w+\[-1\], int\([\w\[\]\"]+\.max\(\)\) \+ 1\)",
+        r'labels=band_retention\["RetentionRate"\]\.to_numpy\(\), right=False',
+    ]
+    for step in steps:
+        assert re.search(step, sibling), f"cltv.py changed: {step!r} — re-check behavioural_retention"
+        assert re.search(step, app), f"behavioural_retention no longer matches cltv.py: {step!r}"

@@ -29,6 +29,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
+
+from utils.teaching import plain_feature  # noqa: F401 — the page calls S.plain_feature
 from sklearn.preprocessing import StandardScaler
 from sksurv.ensemble import RandomSurvivalForest
 from sksurv.linear_model import CoxPHSurvivalAnalysis
@@ -152,6 +154,42 @@ def kaplan_meier(times, events, conf_type: str | None = "log-log") -> pd.DataFra
 
     time_points, survival = kaplan_meier_estimator(events, times)
     return pd.DataFrame({"time": time_points, "survival": survival})
+
+
+def brier_reading(rows: list[dict]) -> str:
+    """The integrated Brier scores in words: who is best, and how far below guessing (0.25)."""
+    numeric = [(r["Model"], float(r["Integrated Brier score"])) for r in rows
+               if not isinstance(r["Integrated Brier score"], str)]
+    if not numeric:
+        return ""
+    best, best_score = min(numeric, key=lambda r: r[1])
+    text = (f"**Reading:** lower is better. **{best}** is best at **{best_score:.3f}** — well below the "
+            f"0.25 of saying *50 %* for everyone, so its percentages carry real information")
+    others = [f"{name} {score:.3f}" for name, score in numeric if name != best]
+    return text + (f" (vs {', '.join(others)})." if others else ".")
+
+
+def survival_at_month(curves: pd.DataFrame, group_col: str, month: float) -> pd.Series:
+    """Per group, the share still a customer at ``month`` (the step curve's last value so far)."""
+    return curves[curves["time"] <= month].groupby(group_col)["survival"].last()
+
+
+def group_reading(curves: pd.DataFrame, group_col: str, early: int = 6, late: int = 24) -> str:
+    """The segment chart in words: who stays longest, by how much, and *when* the gap opens."""
+    at_early = survival_at_month(curves, group_col, early)
+    at_late = survival_at_month(curves, group_col, late)
+    best, worst = at_late.idxmax(), at_late.idxmin()
+    gap_early = at_early[best] - at_early[worst]
+    gap_late = at_late[best] - at_late[worst]
+    text = (f"**Reading:** after {late} months, **{at_late[best]:.0%}** of *{best}* customers are still here, "
+            f"against **{at_late[worst]:.0%}** of *{worst}*. ")
+    if gap_late < 0.05:
+        return text + f"The lines nearly overlap — {group_col.lower()} makes little difference to how long customers stay."
+    if gap_early >= gap_late / 2:
+        return text + (f"The gap is already {gap_early * 100:.0f} percentage points at month {early}: it opens **early**, "
+                       "so look at the first months — onboarding, first bill, first support call.")
+    return text + (f"At month {early} the gap is only {gap_early * 100:.0f} percentage points: it opens **late**, "
+                   "so this is a loyalty question, not an onboarding one.")
 
 
 def km_by_group(frame: pd.DataFrame, group_col: str) -> pd.DataFrame:
@@ -404,6 +442,9 @@ def customer_snapshot(raw: pd.DataFrame, y, positions, labels, curves=None,
     ``y``), so the table speaks in contracts and support calls, not z-scores.
     """
     frame = raw.iloc[list(positions)][PROFILE_COLUMNS].reset_index(drop=True)
+    # Calls, days and euros are whole numbers to a reader — "3", not "3.000000".
+    numeric = frame.select_dtypes("number").columns
+    frame[numeric] = frame[numeric].round().astype("Int64")
     frame.insert(0, "Customer", labels)
     frame["What happened"] = [
         f"left after {y['time'][i]:.0f} months" if y["event"][i]
@@ -448,7 +489,26 @@ def strata_reading(curves: pd.DataFrame, summary: pd.DataFrame, month: int = 12)
         f"far vs {top['Observed churn rate']:.0%} of *Very high*. The wider the lines fan out, the better "
         "the model separates — and the steepest early drop shows *when* to call the riskiest group: before "
         "it happens."
+        + _overlap_note(still, list(summary["Risk group"]), month)
     )
+
+
+def _overlap_note(still: pd.Series, order: list[str], month: int) -> str:
+    """Name neighbouring risk groups whose lines nearly coincide — the model can't rank between them."""
+    pairs = [(a, b) for a, b in zip(order, order[1:])
+             if a in still.index and b in still.index and abs(still[a] - still[b]) < 0.05]
+    if not pairs:
+        return ""
+    a, b = pairs[-1]
+    return (f"\n\n**But look closer:** *{a}* and *{b}* almost overlap ({still[a]:.0%} vs {still[b]:.0%} "
+            f"after {month} months). The model tells safe from risky, but cannot rank *within* the risky "
+            "end — for a campaign, treat those two as one group.")
+
+
+CENSORING_COLUMNS = {
+    "customer": "Customer", "signup": "Signed up (month)", "observed_until": "Last seen (month)",
+    "duration": "Months observed", "event": "Left?", "status": "Status",
+}
 
 
 def cox_coefficients(model, feature_names) -> pd.DataFrame:

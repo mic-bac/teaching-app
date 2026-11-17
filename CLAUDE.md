@@ -103,8 +103,8 @@ and the name `src` would otherwise collide with `segmentation/src`).
   cannot be imported (the newer `predictions/src/*` modules are pure, and should be imported).
   `segmentation_utils.py` instead **imports** `segmentation/src/*` directly — those modules are
   already pure and importable, so copying them would duplicate the source of truth and
-  guarantee drift (the Recommender likewise imports `recommender/src/groceries_data.py`, via
-  `teaching.load_sibling_module`). Prefer importing whenever a sibling exposes a clean `src/`; re-implement
+  guarantee drift (each of its five modules is loaded with `teaching.load_sibling_module`, as the
+  Recommender loads `recommender/src/groceries_data.py` — nothing claims the bare name `src`). Prefer importing whenever a sibling exposes a clean `src/`; re-implement
   only when the sibling is a side-effecting script. Either way the util stays Streamlit-free.
 
 ### Teaching patterns to reuse (this is what makes it a *teaching* app)
@@ -122,13 +122,16 @@ and the name `src` would otherwise collide with `segmentation/src`).
 - **Write for business students, not mathematicians.** Plain language first, short sentences, no
   unexplained jargon; formulas from the slides go into a collapsed *"🔎 The maths, if you're
   curious"* expander. Every lesson page opens with a **💼 Where you'll use this** box (2–3 real job
-  situations) and ends with **🎯 What to remember** (three bullets). The goal is curiosity and
+  situations) directly under `st.title`, and ends with **🎯 What to remember** (three bullets) after
+  an `st.divider()` at the very bottom of the page, **outside the tabs**, so it shows whichever tab is open.
+  Show plain names on screen, not code names (`teaching.plain_feature`, `segmentation_utils.plain_attribute`),
+  and count customers, clusters and folds from 1. The goal is curiosity and
   confidence — students should leave wanting to use these tools at work.
 - Reuse the sibling repo's real content instead of duplicating it.
 
 ## Testing (required for every change)
 
-- Run with `make test` / `uv run pytest`. All tests must stay green (224 as of 2026-11-13).
+- Run with `make test` / `uv run pytest`. All tests must stay green (275 as of 2026-11-17).
 - **`tests/test_sibling_alignment.py`** — drift guard: sibling hyperparameters are regex-read and
   compared with the app. Parameter differences for live-demo runtime are fine but must be
   recorded there as `"intentional"`; logic differences are not.

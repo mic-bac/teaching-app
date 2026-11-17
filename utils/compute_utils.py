@@ -12,7 +12,7 @@ Nothing in this module runs at import time; the demo is guarded under
 ``if __name__ == "__main__":``.
 """
 
-from time import time, sleep
+from time import perf_counter, sleep  # perf_counter: a stopwatch that never jumps (the wall clock can)
 import warnings
 from multiprocessing import cpu_count, get_context
 
@@ -33,9 +33,9 @@ def run_serial(data):
 
     Returns ``(results, elapsed_seconds)``.
     """
-    time_start = time()
+    time_start = perf_counter()
     results = [expensive_row_op(row) for row in data]
-    elapsed = time() - time_start
+    elapsed = perf_counter() - time_start
     return results, elapsed
 
 
@@ -69,10 +69,10 @@ def run_parallel(data, n_cpu: int = 4):
     """
     n_workers = min(n_cpu, cpu_count())
     try:
-        time_start = time()
+        time_start = perf_counter()
         with fork_pool(n_workers) as pool:
             results = pool.map(expensive_row_op, data)
-        elapsed = time() - time_start
+        elapsed = perf_counter() - time_start
         return results, elapsed
     except Exception:
         # Multiprocessing unavailable (e.g. restricted platform): time serially.
@@ -84,9 +84,9 @@ def run_vectorized(data):
 
     Returns ``(result, elapsed_seconds)``.
     """
-    time_start = time()
+    time_start = perf_counter()
     result = np.mean(data, axis=1)
-    elapsed = time() - time_start
+    elapsed = perf_counter() - time_start
     return result, elapsed
 
 
@@ -107,12 +107,28 @@ def run_benchmark(rows: int, cols: int = 10) -> dict:
     }
 
 
-def benchmark_reading(timings: dict, n_cpu: int = 4) -> str:
+def _duration(seconds: float) -> str:
+    """Seconds as a person would say them: "0.03 s", "83 s", "14 min"."""
+    if seconds < 1:
+        return f"{seconds:.2f} s"
+    if seconds < 120:
+        return f"{seconds:.0f} s"
+    return f"{seconds / 60:.0f} min"
+
+
+def benchmark_reading(
+    timings: dict, n_cpu: int = 4, rows: int | None = None, full_rows: int = 1_000_000
+) -> str:
     """The race result in plain words — what the three bars mean.
 
     A learner sees numbers; this turns them into the two things worth saying:
     cores help, but not ``cores``-fold (starting processes and moving data costs
     time), and one library call beats both because the loop runs in compiled code.
+
+    With ``rows`` given, the times are also scaled (linearly) to the real
+    1-million-row file, so a fraction of a second becomes "a coffee break vs a
+    blink" — the business translation. Parallel would do a little better than
+    the linear estimate, because its start-up cost is paid only once.
     """
     workers = min(n_cpu, cpu_count())
     parallel = timings["Serial"] / timings["Parallel"]
@@ -127,11 +143,22 @@ def benchmark_reading(timings: dict, n_cpu: int = 4) -> str:
             f"**Parallel** used {workers} cores and was **not faster** here: for this little data, "
             "starting the workers costs more than they save. Try more rows."
         )
-    return (
+    text = (
         f"{cores}\n\n**Vectorized** was **{vectorized:,.0f}× faster** on a single core. Same result, "
         "one library call instead of a loop — so before reaching for more cores, check whether "
         "your library can already do the whole job at once."
     )
+    if rows:
+        scale = full_rows / rows
+        text += (
+            f"\n\n**Scaled to the real {full_rows:,}-row file** (×{scale:,.0f}): the loop would need "
+            f"about **{_duration(timings['Serial'] * scale)}**, parallel about "
+            f"**{_duration(timings['Parallel'] * scale)}** (a bit less, since starting the workers is "
+            f"paid only once), vectorized about **{_duration(timings['Vectorized'] * scale)}**. "
+            "Run that report every night, and the choice of method is the choice between "
+            "waiting and not noticing."
+        )
+    return text
 
 
 if __name__ == "__main__":

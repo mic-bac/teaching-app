@@ -185,3 +185,13 @@ digraph architecture {{
     app -> sqlite     [label="fallback if\\nunreachable", style=dashed];
 }}
 """.strip()
+
+
+def plain_feature(name: str) -> str:
+    """A one-hot column name as a student reads it: ``Contract Length_Monthly`` → ``Contract Length: Monthly``.
+
+    One-hot encoding glues the column and the category with ``_``; on screen the
+    glue becomes a colon, and the model still uses the original name.
+    """
+    column, _, category = name.rpartition("_")
+    return f"{column}: {category}" if column and " " not in category else name

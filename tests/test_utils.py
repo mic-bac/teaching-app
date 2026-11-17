@@ -6,6 +6,7 @@ fully deterministic and never depend on Docker/PostgreSQL.
 """
 
 import http.server
+import sys
 import threading
 from pathlib import Path
 
@@ -96,12 +97,57 @@ def test_db_total_sales_by_region(tmp_path):
     db_utils.insert_sale(engine, "C", "South", 1, 99.5)
 
     agg = db_utils.total_sales_by_region(engine)
-    assert list(agg.columns) == ["region", "total_sales"]
+    assert list(agg.columns) == ["region", "total_sales", "n_sales"]
+    assert dict(zip(agg["region"], agg["n_sales"])) == {"North": 2, "South": 1}
     # Ordered by total_sales descending: South (99.5) before North (50.0).
     assert list(agg["region"]) == ["South", "North"]
     totals = dict(zip(agg["region"], agg["total_sales"]))
     assert totals["North"] == 50.0
     assert totals["South"] == 99.5
+
+
+def test_region_reading_separates_more_from_bigger():
+    import pandas as pd
+
+    # North: 4 sales of 100 (more, smaller); South: 1 sale of 300.
+    df = pd.DataFrame(
+        {"region": ["North", "South"], "total_sales": [400.0, 300.0], "n_sales": [4, 1]}
+    )
+    text = db_utils.region_reading(df)
+    assert "**North** sold the most: **€400**" in text and "57%" in text
+    assert "€100 in North vs €300 in South" in text
+    assert "North simply has more sales" in text and "from 1 sale." in text
+    both = df.assign(total_sales=[1600.0, 300.0])
+    assert "more sales *and* bigger ones" in db_utils.region_reading(both)
+    assert db_utils.region_reading(df.iloc[0:0]) == ""
+
+
+def test_explain_schema_in_plain_words(tmp_path):
+    engine = _temp_engine(tmp_path)
+    db_utils.init_db(engine)
+    plain = db_utils.explain_schema(db_utils.get_schema(engine)).set_index("column")
+    words = plain["in plain words"]
+    assert words["amount"] == "decimal number"
+    assert words["product"] == "text"
+    assert words["created_at"] == "date and time"
+    assert words["id"].startswith("whole number") and "invoice number" in words["id"]
+
+
+def test_example_queries_run_and_are_explained(tmp_path):
+    engine = _temp_engine(tmp_path)
+    db_utils.init_db(engine)
+    db_utils.insert_sale(engine, "Widget", "North", 2, 300.0)
+    db_utils.insert_sale(engine, "Gadget", "North", 1, 100.0)
+    for name, q in db_utils.EXAMPLE_QUERIES.items():
+        df, msg = db_utils.run_query(engine, q["sql"])
+        assert df is not None, f"{name}: {msg}"
+        table = db_utils.explain_query(name)
+        assert list(table.columns) == ["SQL", "In plain English", "In Excel"]
+        # Every explained clause really appears in the query.
+        flat = " ".join(q["sql"].split())
+        assert all(clause in flat for clause in table["SQL"]), name
+    df, _ = db_utils.run_query(engine, db_utils.EXAMPLE_QUERIES["Big sales in the North"]["sql"])
+    assert list(df["amount"]) == [300.0]
 
 
 def test_db_total_sales_empty(tmp_path):
@@ -1376,11 +1422,122 @@ def _toy_weekly(n=143, seed=0):
 
 def test_cross_validation_folds_only_ever_move_forward():
     _needs_predictions()
-    cv = forecasting_utils.cross_validate(_toy_weekly(), n_folds=3, horizon=13)
-    assert list(cv["fold"]) == [0, 1, 2]
+    result = forecasting_utils.cross_validate(_toy_weekly(), n_folds=3, horizon=13)
+    cv = result["scores"]
+    assert list(cv["fold"]) == [1, 2, 3]
     assert cv["train_weeks"].is_monotonic_increasing
     assert (pd.to_datetime(cv["test_from"]).diff().dropna() > pd.Timedelta(0)).all()
-    assert (cv[["seasonal naive MAPE", "Holt-Winters MAPE"]] > 0).all().all()
+    # SARIMA is opt-in (slow); the three fast forecasts are always there.
+    assert result["models"] == ["seasonal naive", "naive × growth", "Holt-Winters"]
+    assert (cv[result["models"]] > 0).all().all()
+    # One weekly % error per test week per model — the raw material for the band.
+    assert all(len(errors) == 3 * 13 for errors in result["errors"].values())
+    assert len(result["forecasts"]) == 3
+
+
+def test_growth_baseline_is_last_year_times_recent_growth():
+    _needs_predictions()
+    weeks = pd.date_range("2010-01-01", periods=70, freq="7D")
+    # Year two runs exactly 10% above year one, week for week.
+    year_one = 100 + 10 * np.sin(np.arange(52) / 52 * 2 * np.pi)
+    sales = pd.Series(np.r_[year_one, year_one[:18] * 1.1], index=weeks)
+    forecast = forecasting_utils.seasonal_naive_growth_forecast(sales, 5)
+    plain = forecasting_utils.seasonal_naive_forecast(sales, 5)
+    np.testing.assert_allclose(forecast, plain * 1.1)
+    example = forecasting_utils.growth_example(sales)
+    assert example["growth"] == pytest.approx(1.1)
+    assert example["forecast"] == pytest.approx(forecast[0])
+
+
+def test_easter_week_is_the_week_ending_on_good_friday():
+    _needs_predictions()
+    weeks = pd.date_range("2010-02-05", periods=143, freq="7D")  # Fridays, like Walmart's
+    easter = forecasting_utils.easter_weeks(weeks)
+    # Easter Sunday: 4 Apr 2010, 24 Apr 2011, 8 Apr 2012 — the shopping week ends two days earlier.
+    assert [d.date().isoformat() for d in easter] == ["2010-04-02", "2011-04-22", "2012-04-06"]
+
+
+def test_explain_misses_names_the_moved_holiday():
+    _needs_predictions()
+    weeks = pd.date_range("2011-01-07", periods=70, freq="7D")
+    events = pd.Series("", index=weeks)
+    events[weeks[60]] = "Easter"  # this year
+    events[weeks[60 - 52 + 2]] = "Easter"  # last year, two weeks later in the calendar
+    actual = pd.Series(100.0, index=weeks[58:64])
+    forecast = np.full(6, 100.0)
+    forecast[2] = 80.0  # Easter this year, copied from an ordinary week
+    forecast[4] = 120.0  # last year's Easter copied into an ordinary week
+    table = forecasting_utils.explain_misses(actual, forecast, events)
+    assert table.loc[2, "miss %"] == pytest.approx(20.0)
+    assert "this year" in table.loc[2, "why"]
+    assert "last year's Easter" in table.loc[4, "why"]
+    top = forecasting_utils.explain_misses(actual, forecast, events, top=2)
+    assert len(top) == 2 and set(top["week"]) == {weeks[60].date(), weeks[62].date()}
+    reading = forecasting_utils.misses_reading(top)
+    assert "20% too low" in reading and "20% too high" in reading
+
+
+def test_cv_interval_covers_the_requested_share_of_past_misses():
+    _needs_predictions()
+    errors = [-5, -1, 0.5, 1, 2, -2, 3, 1.5, -0.5, 4]
+    band = forecasting_utils.cv_interval(errors, coverage=0.8)
+    assert np.mean(np.abs(errors) <= band) >= 0.8
+    assert band < 5  # the single worst miss stays outside
+
+
+def test_holt_winters_parts_reads_level_trend_and_season():
+    _needs_predictions()
+    fitted, _ = forecasting_utils.fit_ets(_toy_weekly(n=120), 4)
+    parts = forecasting_utils.holt_winters_parts(fitted)
+    assert {"alpha", "beta", "gamma", "last_level", "trend_per_week"} <= set(parts)
+    assert list(parts["parts"].columns) == ["level", "trend", "season"]
+    assert parts["last_level"] == pytest.approx(100, rel=0.1)  # the toy series sits at 100
+    assert abs(parts["trend_pct_per_year"]) < 10  # no trend was planted
+
+
+def test_with_easter_adds_one_row_per_year_including_the_future():
+    _needs_predictions()
+    holidays = pd.DataFrame({"holiday": ["Superbowl"], "ds": [pd.Timestamp("2011-02-11")],
+                             "lower_window": [-3], "upper_window": [2]})
+    calendar = forecasting_utils.with_easter(holidays, "2010-02-05", "2013-12-31")
+    easter = calendar[calendar["holiday"] == "Easter"]
+    # 2013 is after the data ends — Prophet must know where *next* Easter falls.
+    assert [d.date().isoformat() for d in easter["ds"]] == [
+        "2010-04-02", "2011-04-22", "2012-04-06", "2013-03-29"]
+    assert len(calendar) == len(easter) + 1  # the original holiday is kept
+
+
+def test_prophet_component_reading_finds_peaks_in_money():
+    _needs_predictions()
+    days = pd.date_range("2011-01-07", periods=6, freq="7D")
+    components = {
+        "trend": pd.DataFrame({"ds": days, "trend": [100.0, 101, 102, 103, 104, 105]}),
+        "yearly": pd.DataFrame({"ds": days, "yearly": [5.0, -8, 2, 20, 0, 1]}),
+        "holidays": pd.DataFrame({"ds": days, "holidays": [0.0, 0, 0, 0, 15, 0]}),
+    }
+    reading = forecasting_utils.prophet_component_reading(components)
+    assert reading["season_peak"] == (days[3], 20.0)
+    assert reading["season_low"] == (days[1], -8.0)
+    assert reading["holiday_peak"] == (days[4], 15.0)
+    assert reading["trend_change"] == pytest.approx(5.0)
+
+
+def test_readings_put_the_numbers_into_words():
+    _needs_predictions()
+    report = forecasting_utils.suitability_report(_toy_weekly())
+    readings = forecasting_utils.report_readings(report)
+    assert set(readings) == {"grid", "cycles", "trend", "season", "stationary"}
+    assert "2.75 years" in readings["cycles"]
+    assert forecasting_utils.money(1_523_442) == "€1.5M"
+    assert forecasting_utils.money(-7_500) == "−€8k"
+    assert "€1.0M" in forecasting_utils.mape_in_money(2.0, pd.Series([50e6, 50e6]))
+    scores = pd.DataFrame({"fold": [1, 2], "test_from": ["a", "b"], "test_to": ["c", "d"],
+                           "seasonal naive": [4.0, 2.0], "Holt-Winters": [3.0, 1.5],
+                           "SARIMA": [4.05, 2.5]})
+    lines = forecasting_utils.cv_reading(scores, ["seasonal naive", "Holt-Winters", "SARIMA"])
+    assert "**Holt-Winters**" in lines[0] and "wins 2 of 2" in lines[0]
+    assert "fold 1" in lines[1]
+    assert "1 of 2 folds" in lines[2]
 
 
 def test_christmas_cannot_be_tested_by_a_seasonal_model():
@@ -1403,7 +1560,7 @@ def test_markdown_break_counts_weeks_before_tracking_started():
 
 
 def test_two_sibling_src_packages_coexist_in_one_process():
-    """segmentation/src (sys.path) and predictions/src (package loader) must not shadow each other."""
+    """segmentation/src (per-module loader) and predictions/src (package loader) must not shadow each other."""
     _needs_predictions()
     from utils import segmentation_utils
 
@@ -1412,6 +1569,7 @@ def test_two_sibling_src_packages_coexist_in_one_process():
     assert "predictions" in forecasting_utils.tc.__file__
     assert "segmentation" in segmentation_utils._rfm.__file__
     assert forecasting_utils.fm.SEASONAL_PERIOD == 52  # relative import inside the package resolved
+    assert "src" not in sys.modules  # nobody claims the bare name any more
 
 
 
@@ -1571,7 +1729,7 @@ def test_compare_models_puts_before_and_after_side_by_side(fake_results):
     results = detection_utils.load_results(fake_results)
     table = detection_utils.compare_models(results, "spaghetti", 0.25)
     row = table.iloc[0]
-    assert row["pretrained sees"] == "bowl (60%)" and row["fine-tuned sees"] == "spaghetti_bolo (95%)"
+    assert row["pretrained sees"] == "bowl (60%)" and row["fine-tuned sees"] == "spaghetti bolognese (95%)"
     assert detection_utils.compare_models(results, "spaghetti", 0.99).iloc[0]["pretrained sees"] == "—"
 
 
@@ -1611,6 +1769,16 @@ def test_benchmark_reading_reports_both_speedups():
     assert "4.0× faster" in text and "2,000× faster" in text
 
 
+def test_benchmark_reading_scales_to_the_full_file():
+    # 20,000 rows → ×50 to one million: 1.6 s → 80 s, 0.6 s → 30 s, 0.0005 s → 0.03 s.
+    t = {"Serial": 1.6, "Parallel": 0.6, "Vectorized": 0.0005}
+    text = compute_utils.benchmark_reading(t, rows=20_000)
+    assert "1,000,000-row file** (×50)" in text
+    assert "about **80 s**" in text and "about **30 s**" in text and "about **0.03 s**" in text
+    assert "Scaled" not in compute_utils.benchmark_reading(t)
+    assert compute_utils._duration(600) == "10 min"
+
+
 def test_benchmark_reading_admits_when_parallel_does_not_pay_off():
     text = compute_utils.benchmark_reading({"Serial": 0.1, "Parallel": 0.3, "Vectorized": 0.001})
     assert "not faster" in text
@@ -1628,3 +1796,137 @@ def test_read_rule_turns_the_three_numbers_into_a_sentence():
                       "support": 0.01, "confidence": 0.4, "lift": 2.5})
     text = recommender_utils.read_rule(rule, n_baskets=1000)
     assert "40%" in text and "2.5× more often" in text and "10 of 1,000 baskets" in text
+
+
+def test_detection_readings_put_scores_into_words():
+    table = pd.DataFrame({"minimum confidence": ["10%", "75%"], "boxes kept": [33, 4]})
+    assert "**33 boxes** at 10%" in detection_utils.threshold_reading(table)
+    precision, recall = detection_utils.metrics_in_counts({"precision": 0.92, "recall": 1.0}, 12)
+    assert "92 were really spaghetti" in precision and "8 were false alarms" in precision
+    assert "every plate" in recall and "12 check photos" in recall
+    partial = detection_utils.metrics_in_counts({"precision": 0.9, "recall": 0.8}, 10)[1]
+    assert "80% of the plates" in partial and "missing about 20 in 100" in partial
+    compare = pd.DataFrame({
+        "photo": ["gnocchi bolognese", "spaghetti plate"],
+        "pretrained sees": ["bowl (76%), spoon (37%)", "bowl (96%)"],
+        "fine-tuned sees": ["spaghetti_bolo (88%)", "spaghetti_bolo (86%)"],
+    })
+    reading = detection_utils.compare_reading(compare)
+    assert "on **0**" in reading and "**2 of 2**" in reading
+    assert "*bowl*" in reading and "gnocchi" in reading
+
+
+def test_clusters_are_counted_from_one_for_students():
+    assert segmentation_utils.cluster_label(0) == "Cluster 1"
+    assert segmentation_utils.cluster_label(3) == "Cluster 4"
+    assert segmentation_utils.cluster_label(-1) == "Noise"
+    sizes = segmentation_utils.cluster_size_frame({"K-Means": np.array([0, 0, 1, -1])})
+    assert set(sizes["Cluster"]) == {"Cluster 1", "Cluster 2", "Noise"}
+
+
+def test_big_number_says_trillion_not_scientific_notation():
+    assert forecasting_utils.big_number(1.26e12) == "1.3 trillion"
+    assert forecasting_utils.big_number(4.5e9) == "4.5 billion"
+    assert forecasting_utils.big_number(2_000_000) == "2.0 million"
+    assert forecasting_utils.big_number(950) == "950"
+
+
+def test_customer_snapshot_shows_whole_numbers():
+    raw = pd.DataFrame({
+        "Contract Length": ["Monthly", "Annual"], "Subscription Type": ["Basic", "Pro"],
+        "Support Calls": [3.0, 1.0], "Payment Delay": [12.0, 0.0],
+        "Usage Frequency": [7.0, 20.0], "Total Spend": [512.4, 880.6],
+    })
+    y = np.array([(True, 5.0), (False, 30.0)], dtype=[("event", bool), ("time", float)])
+    snap = survival_utils.customer_snapshot(raw, y, [0, 1], ["Customer 1", "Customer 2"])
+    assert str(snap["Support Calls"].dtype) == "Int64"
+    assert snap.loc[1, "Total Spend"] == 881
+
+
+def test_things_seen_lists_what_one_photo_shows():
+    boxes = pd.DataFrame({"label": ["spoon", "bowl", "bowl"], "confidence": [0.4, 0.9, 0.8]})
+    assert detection_utils.things_seen(boxes) == "a *bowl* or a *spoon*"
+    assert detection_utils.things_seen(boxes.iloc[:0]) == "nothing it is sure enough about"
+
+
+def test_plain_names_replace_code_names():
+    assert teaching.plain_feature("Contract Length_Monthly") == "Contract Length: Monthly"
+    assert teaching.plain_feature("Support Calls") == "Support Calls"
+    assert segmentation_utils.plain_attribute("NumWebVisitsMonth") == "Web visits a month"
+    assert survival_utils.CENSORING_COLUMNS["observed_until"] == "Last seen (month)"
+
+
+def test_content_based_readings_name_ties_and_blends():
+    recs = pd.DataFrame({"title": ["A", "B", "C"], "genres": ["x y", "x y", "x"],
+                         "similarity": [1.0, 1.0, 0.8]})
+    tie = recommender_utils.tie_reading(recs, "Liked", total_identical=12)
+    assert "2 of these 3" in tie and "12 movies" in tie and "arbitrary" in tie
+    assert "closest match is *C*" in recommender_utils.tie_reading(recs.iloc[[2]], "Liked")
+    movies = pd.DataFrame({"title": ["F1", "F2"], "genres": ["x y", "x"]})
+    blend = recommender_utils.profile_reading(recs, ["F1", "F2"], movies)
+    assert "*F1* 2 of 2" in blend and "*F2* 1 of 1" in blend
+    item = recommender_utils.item_reading(pd.Series([0.57, 0.53], index=["Toy Story 2", "Z"]), "Toy Story")
+    assert "*Toy Story 2* comes first (0.57)" in item and "0.53" in item
+
+
+def test_propensity_readings_quote_the_numbers():
+    corr = pd.Series({"Support Calls": 0.52, "Total Spend": -0.36, "Contract Length_Monthly": 0.01})
+    text = propensity_utils.correlation_reading(corr)
+    assert "**Support Calls** (+0.52)" in text and "**Total Spend** (-0.36)" in text
+    assert "Contract Length: Monthly" in text and "no straight-line link" in text
+    flat = pd.DataFrame({"Segment": ["Low risk", "Medium risk", "High risk"],
+                         "Actual churn rate": [0.06, 0.82, 0.88]})
+    assert "almost the same" in propensity_utils.segment_climb_reading(flat)
+    steep = flat.assign(**{"Actual churn rate": [0.05, 0.30, 0.80]})
+    assert "real step" in propensity_utils.segment_climb_reading(steep)
+
+
+def test_survival_group_reading_says_when_the_gap_opens():
+    def curve(group, s6, s24):
+        return pd.DataFrame({"time": [0, 6, 24], "survival": [1.0, s6, s24], "Contract": group})
+    late = pd.concat([curve("Annual", 0.97, 0.82), curve("Monthly", 0.92, 0.62)])
+    text = survival_utils.group_reading(late, "Contract")
+    assert "**82%** of *Annual*" in text and "**62%** of *Monthly*" in text and "**late**" in text
+    early = pd.concat([curve("A", 0.95, 0.80), curve("B", 0.70, 0.60)])
+    assert "**early**" in survival_utils.group_reading(early, "Contract")
+    same = pd.concat([curve("A", 0.95, 0.80), curve("B", 0.95, 0.79)])
+    assert "nearly overlap" in survival_utils.group_reading(same, "Contract")
+
+
+def test_strata_overlap_is_called_out():
+    still = pd.Series({"Low": 0.99, "Medium": 0.95, "High": 0.86, "Very high": 0.82})
+    note = survival_utils._overlap_note(still, ["Low", "Medium", "High", "Very high"], 12)
+    assert "*High* and *Very high* almost overlap (86% vs 82%" in note
+    assert survival_utils._overlap_note(pd.Series({"Low": 0.9, "High": 0.5}), ["Low", "High"], 12) == ""
+
+
+def test_clustering_scores_read_honestly():
+    sweep = pd.DataFrame({"k": [2, 3, 4], "inertia": [9.0, 8.0, 7.0], "silhouette": [0.35, 0.31, 0.24],
+                          "calinski_harabasz": [1387, 1010, 894], "davies_bouldin": [1.19, 1.34, 1.46]})
+    text = segmentation_utils.metric_favourites(sweep)
+    assert "all prefer k = 2" in text and "inertia keeps falling" in text
+    assert segmentation_utils.silhouette_words(0.24) == "overlapping groups"
+    assert segmentation_utils.silhouette_words(0.55) == "clearly separated groups"
+    fp = pd.Series({"Income": 1.3, "Total_Spending": 1.6, "Age": 0.1})
+    assert segmentation_utils.persona_name(fp) == "Affluent · big spenders"
+    assert segmentation_utils.persona_name(pd.Series({"Income": 0.1})) == "The average customer"
+
+
+def test_tuning_results_read_in_plain_words():
+    results = pd.DataFrame({"params": ["{'C': 0.1}", "{'C': 10}"], "mean_test_score": [0.8882, 0.8878],
+                            "std_test_score": [0.0069, 0.0071], "rank_test_score": [1, 2]})
+    table = propensity_utils.tuning_table(results)
+    assert table["Setting tried"].tolist() == ["C = 0.1", "C = 10"]
+    assert "Average CV ROC-AUC" in table.columns
+    assert "tuning hardly matters" in propensity_utils.tuning_reading(results)
+    wide = results.assign(mean_test_score=[0.95, 0.80])
+    assert "does matter" in propensity_utils.tuning_reading(wide)
+
+
+def test_brier_reading_names_the_best_model_against_guessing():
+    rows = [{"Model": "Cox", "Integrated Brier score": 0.1764},
+            {"Model": "Forest", "Integrated Brier score": 0.1583},
+            {"Model": "SVM", "Integrated Brier score": "no survival function"}]
+    text = survival_utils.brier_reading(rows)
+    assert "**Forest** is best at **0.158**" in text and "0.25" in text and "Cox 0.176" in text
+    assert survival_utils.brier_reading(rows[2:]) == ""

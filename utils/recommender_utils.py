@@ -110,6 +110,48 @@ def shared_genres(liked: str, other: str) -> str:
     return f"{len(mine & genre_set(other))} of {len(mine)}"
 
 
+def tie_reading(recs: pd.DataFrame, liked: str, total_identical: int | None = None) -> str:
+    """Say it out loud when the top of a content-based list is a tie.
+
+    Many movies carry exactly the same genre labels, so they all score 1.000 and
+    their order is arbitrary — the method has run out of information, which is
+    the honest reason collaborative filtering exists.
+    """
+    ties = int((recs["similarity"] >= 0.9995).sum())
+    top = recs.iloc[0]
+    if ties < 2:
+        return (f"**Reading:** the closest match is *{top['title']}* (similarity "
+                f"{top['similarity']:.3f}) — the next ones drop off as they miss or add genres.")
+    pool = (f" — {total_identical:,} movies in the catalogue share them, and these {ties} are just the first ones found"
+            if total_identical and total_identical > ties else "")
+    return (f"**Reading:** {ties} of these {len(recs)} movies have *exactly* the genres of *{liked}* "
+            f"(similarity 1.000){pool}. Their order is arbitrary: genres alone cannot tell them apart. "
+            "A shop would break the tie with popularity or ratings — which is what the next tab, "
+            "collaborative filtering, adds.")
+
+
+def profile_reading(recs: pd.DataFrame, favourites: list[str], movies_df: pd.DataFrame) -> str:
+    """Which favourite's genres the profile's top match carries — the weights in action."""
+    top = recs.iloc[0]
+    top_genres = genre_set(top["genres"])
+    lookup = movies_df.set_index("title")["genres"]
+    parts = [f"*{f}* {len(genre_set(lookup[f]) & top_genres)} of {len(genre_set(lookup[f]))}"
+             for f in favourites if f in lookup.index]
+    return (f"**Reading:** the profile blends the genres of your favourites, so the best match, "
+            f"*{top['title']}* (similarity {top['similarity']:.3f}), shares genres with each of them "
+            f"({', '.join(parts)}). Lower one weight and watch the list move towards the other favourite.")
+
+
+def item_reading(similar: pd.Series, movie: str) -> str:
+    """How to read the item-based list: similarity of *raters*, not of content."""
+    top_title, top_sim = similar.index[0], float(similar.iloc[0])
+    return (f"**How to read it:** here two movies are similar when the **same people rated them the same "
+            f"way** — genres play no part. *{top_title}* comes first ({top_sim:.2f}): people who loved "
+            f"*{movie}* tended to love it too. 1.00 would mean identical ratings from identical people; "
+            f"the last one on the list scores {float(similar.iloc[-1]):.2f}. Compare with the content-based "
+            "tab: different evidence, so a different list.")
+
+
 def genre_highlight(movies_df: pd.DataFrame, genres: list[str]) -> pd.Series:
     """Per movie, which of the chosen genres it has ("Comedy + Romance"), else "other"."""
     def label(g):
@@ -614,7 +656,7 @@ digraph recommenders {
     cf   [label="Collaborative\\nFiltering\\n(user ratings)", fillcolor="#c8e6c9"];
     ar   [label="Association\\nRules\\n(market baskets)", fillcolor="#c8e6c9"];
 
-    nb   [label="Neighborhood\\n(user / item-based)"];
+    nb   [label="Neighbourhood\\n(user / item-based)"];
     mb   [label="Model-based\\n(bias + matrix\\nfactorization)"];
 
     root -> cbf;

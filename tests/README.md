@@ -8,21 +8,28 @@ Automated tests for the Streamlit teaching app.
   `AppTest` framework and asserts **no exceptions** are raised (`Home.py` plus
   `pages/1_Database_Basics.py` … `pages/6_Segmentation.py`). On top of the load
   check, one or two interactions per page are driven at their cheapest setting:
-  the landing page renders, the DB page shows a backend banner + sales table and
+  the landing page renders, the DB page shows a backend banner + sales table, the
+  Excel-vs-database box and the line-by-line SQL explanation, reads the region chart, and
   the SQL playground runs a query, the CPU and I/O benchmarks run on button
-  click, the recommender returns recommendations and trains its matrix
+  click (the CPU result is scaled to the 1-million-row file, and both tabs show their everyday
+  analogies), the recommender returns recommendations and trains its matrix
   factorization, the propensity page fits a model / cross-validates / tunes /
   draws its learning and validation curves, and the survival page reports
   Kaplan-Meier readouts, trains all three models, scores them over time, and
   states that the ranking-only SVM has no survival curve, and the segmentation
   page reacts to its retention-rate slider without reloading the transaction log. The time-series page reproduces the lecture's Excel smoothing example and fits SARIMA on click.
 - **`test_sibling_alignment.py`** — a drift guard for the utils that *re-implement* a
-  sibling script (propensity, survival, recommender). Each hyperparameter is regex-read from
+  sibling script (propensity, survival, recommender — and the inline steps of the time-series
+  and forecasting scripts: CV folds, the band's coverage, the depth sweep, the CO₂ horizon — plus the
+  survival evaluation window and risk groups, and the parallelization constants: simulated work per
+  row, worker cap, download threads, dataset columns).
+  Each hyperparameter is regex-read from
   the sibling's source and compared with what the app runs. Entries are either `"same"` (the
   app must match) or `"intentional"` (a recorded live-demo deviation); either way the
   sibling's value is pinned, so a sibling edit fails here instead of drifting silently. It
   also checks that the segmentation action table only names segments the sibling's RFM ladder
-  defines. Skips when a sibling repo is not checked out.
+  defines, and that the recency-band mapping (`behavioural_retention`) still matches `cltv.py`
+  section 7 step by step. Skips when a sibling repo is not checked out.
 - **`test_deployment.py`** — every sibling the app reads from is listed in `siblings.toml`
   (https URL, git- and docker-ignored), and the branch rule resolves correctly: app
   `develop` → sibling `develop`, `main` → `main`, environment variables first.
@@ -43,20 +50,37 @@ Automated tests for the Streamlit teaching app.
   - `forecasting_utils` — the slides' Excel smoothing example reproduced exactly (MAE 10.20,
     MSE 184.89, RMSE 13.60 at α = 0.4), rolling-origin folds that only move forward, every
     Christmas lying before the first week a 52-week model can be tested on, the promotion
-    break, the SARIMA label derived from the sibling, and `predictions/src` coexisting with
+    break, the SARIMA label derived from the sibling, the growth baseline (last year × growth),
+    Easter weeks ending on Good Friday, misses labelled with the moved holiday, the CV band
+    and the plain-language readings, and `predictions/src` coexisting with
     `segmentation/src` in one process.
   - forecasting: the feature table drops the first year per store (`lag_52`), the vectorised
     per-store trend in `fit_hybrid` keeps stores apart, and one-Holt-Winters-per-store reports
-    accuracy and cost. The Forecasting page smoke test presses all four experiment buttons.
+    accuracy and cost; `with_easter` adds next year's Easter too, and the Prophet component
+    reading finds the peaks. The Forecasting page smoke test presses all four experiment
+    buttons and checks the Easter calendar test and the worked readings.
   - `detection_utils` — on a tiny fake `results/` export (no sibling, no torch): flattening
     the stored boxes, the confidence threshold (stricter never keeps more boxes), boxes really
     drawn on the photo, the YOLO label format, IoU from 0 to 1, the first epoch reaching a
-    mAP level, the before/after table, credit parsing and the notebook's code-line count. The
+    mAP level, the before/after table, credit parsing, the notebook's code-line count, and the
+    plain-number readings (precision/recall as counts, the threshold trade-off, before vs after). The
     Object Detection smoke test moves the threshold slider (skipped if the sibling results are
     absent).
   - The plain-language readings shown under results: `benchmark_reading` / `io_reading` (both
-    Parallelization races, incl. multiprocessing explained as overlapped waiting) and
+    Parallelization races, incl. multiprocessing explained as overlapped waiting, and the CPU
+    race scaled to the real 1-million-row file), `region_reading` (more sales or bigger ones?),
+    `explain_schema` (column types in plain words), the example SQL queries (each runs, and every
+    explained clause appears in its query) and
     `read_rule` (the top association rule as a sentence).
+  - From the holistic review: plain names instead of code names (`plain_feature`, `plain_attribute`,
+    the censoring-table headings), customers / clusters / folds counted from 1, `big_number`
+    (MSE as "1.3 trillion", not `1.26e+12`), whole numbers in the survival customer table, and the
+    new readings — content-based ties and taste-profile blends, the item-based list, the
+    correlation chart, the churn climb across risk segments (incl. "Medium ≈ High"), when the
+    contract-length gap opens, neighbouring risk strata that overlap, which k each clustering
+    score prefers (inertia has none), the silhouette in words, cluster nicknames, and the labels a
+    pretrained detector saw on one photo. Also: the tuning results as a plain table with a "did
+    tuning matter?" reading, and the integrated Brier score read against the 0.25 guessing line.
   - `test_sibling_alignment` also checks that `object-detection/results/` was exported with the
     notebook's current EPOCHS / BATCH / IMG_SIZE (skipped if the sibling is absent).
   - `data_generator.generate_dataset` — shape, column names, value range.

@@ -141,12 +141,14 @@ def fetch_sales(engine) -> pd.DataFrame:
 def total_sales_by_region(engine) -> pd.DataFrame:
     """Return total sales amount per region, highest first.
 
-    Columns: ``region``, ``total_sales``.
+    Columns: ``region``, ``total_sales``, ``n_sales`` (how many sales make up the
+    total — needed to tell "more sales" apart from "bigger sales").
     """
     stmt = (
         select(
             sales.c.region.label("region"),
             func.sum(sales.c.amount).label("total_sales"),
+            func.count().label("n_sales"),
         )
         .group_by(sales.c.region)
         .order_by(func.sum(sales.c.amount).desc())
@@ -273,3 +275,141 @@ def run_query(engine, sql: str, allow_writes: bool = False):
         return None, f"OK — {affected} row(s) affected."
     except Exception as exc:  # surface DB errors to the learner
         return None, f"Error: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# Plain-language readings (for business students)
+# ---------------------------------------------------------------------------
+def _plain_type(sql_type: str) -> str:
+    """Translate a database column type into everyday words."""
+    t = sql_type.upper()
+    if "INT" in t:
+        return "whole number"
+    if any(k in t for k in ("CHAR", "TEXT", "STRING")):
+        return "text"
+    if any(k in t for k in ("FLOAT", "DOUBLE", "REAL", "NUMERIC", "DECIMAL")):
+        return "decimal number"
+    if "DATE" in t or "TIME" in t:
+        return "date and time"
+    return sql_type.lower()
+
+
+def explain_schema(schema: pd.DataFrame) -> pd.DataFrame:
+    """Add an ``in plain words`` column to :func:`get_schema`'s table.
+
+    The type names differ by backend (Postgres says ``DOUBLE PRECISION``, SQLite
+    ``FLOAT``) but mean the same thing, so the plain word is what students read.
+    The primary key is explained as what it is in business life: a unique number
+    per row, like an invoice number.
+    """
+    out = schema.copy()
+    words = []
+    for _, row in out.iterrows():
+        plain = _plain_type(row["type"])
+        if row["primary_key"]:
+            plain += " — unique per row, like an invoice number"
+        words.append(plain)
+    out["in plain words"] = words
+    return out
+
+
+def region_reading(by_region: pd.DataFrame) -> str:
+    """One paragraph reading the *Total sales by region* chart with its numbers.
+
+    Compares the top and bottom region and says whether the gap comes from *more*
+    sales or from *bigger* sales — the question a manager asks next. Expects the
+    columns of :func:`total_sales_by_region`; returns ``""`` for an empty table.
+    """
+    if by_region.empty:
+        return ""
+    df = by_region.sort_values("total_sales", ascending=False).reset_index(drop=True)
+
+    def n(k) -> str:
+        return f"{int(k)} sale" + ("" if int(k) == 1 else "s")
+
+    total = df["total_sales"].sum()
+    top, low = df.iloc[0], df.iloc[-1]
+    head = (
+        f"**{top['region']}** sold the most: **€{top['total_sales']:,.0f}** from "
+        f"{n(top['n_sales'])} — {top['total_sales'] / total:.0%} of all revenue."
+    )
+    if len(df) == 1:
+        return head
+    avg_top = top["total_sales"] / top["n_sales"]
+    avg_low = low["total_sales"] / low["n_sales"]
+    more = top["n_sales"] > low["n_sales"]
+    bigger = avg_top > avg_low
+    if more and bigger:
+        why = "has more sales *and* bigger ones"
+    elif more:
+        why = "simply has more sales — its average sale is not bigger"
+    elif bigger:
+        why = "has bigger sales, not more of them"
+    else:
+        why = "has neither more nor bigger sales — look at the outliers"
+    return (
+        f"{head} **{low['region']}** sold the least: €{low['total_sales']:,.0f} from "
+        f"{n(low['n_sales'])}. Why the gap? An average sale is "
+        f"€{avg_top:,.0f} in {top['region']} vs €{avg_low:,.0f} in {low['region']}, so "
+        f"{top['region']} {why}."
+    )
+
+
+# Example queries for the SQL playground, each explained clause by clause — in
+# plain English and as the Excel step a business student already knows.
+EXAMPLE_QUERIES: dict[str, dict] = {
+    "Totals by region": {
+        "sql": (
+            "SELECT region, COUNT(*) AS n, SUM(amount) AS total\n"
+            "FROM sales\nGROUP BY region\nORDER BY total DESC;"
+        ),
+        "explain": [
+            ("SELECT region, COUNT(*) AS n, SUM(amount) AS total",
+             "Show the region, how many sales, and their total amount",
+             "Pivot-table values: Count and Sum"),
+            ("FROM sales", "…taken from the sales table", "Pick the sheet"),
+            ("GROUP BY region", "One result row per region", "Pivot-table rows: region"),
+            ("ORDER BY total DESC", "Biggest total first", "Sort largest to smallest"),
+        ],
+    },
+    "Ten biggest sales": {
+        "sql": (
+            "SELECT product, region, amount\n"
+            "FROM sales\nORDER BY amount DESC\nLIMIT 10;"
+        ),
+        "explain": [
+            ("SELECT product, region, amount", "Show only these three columns", "Hide the other columns"),
+            ("FROM sales", "…taken from the sales table", "Pick the sheet"),
+            ("ORDER BY amount DESC", "Biggest amount first", "Sort largest to smallest"),
+            ("LIMIT 10", "Keep only the first ten rows", "Look at the top ten rows"),
+        ],
+    },
+    "Big sales in the North": {
+        "sql": (
+            "SELECT product, quantity, amount\n"
+            "FROM sales\nWHERE region = 'North' AND amount > 250\nORDER BY amount DESC;"
+        ),
+        "explain": [
+            ("SELECT product, quantity, amount", "Show these three columns", "Hide the other columns"),
+            ("FROM sales", "…taken from the sales table", "Pick the sheet"),
+            ("WHERE region = 'North' AND amount > 250",
+             "Keep only North sales above €250", "AutoFilter on two columns"),
+            ("ORDER BY amount DESC", "Biggest amount first", "Sort largest to smallest"),
+        ],
+    },
+    "Everything": {
+        "sql": "SELECT * FROM sales;",
+        "explain": [
+            ("SELECT *", "Show every column", "The whole sheet"),
+            ("FROM sales", "…taken from the sales table", "Pick the sheet"),
+        ],
+    },
+}
+
+
+def explain_query(name: str) -> pd.DataFrame:
+    """The clause-by-clause explanation of an :data:`EXAMPLE_QUERIES` entry."""
+    return pd.DataFrame(
+        EXAMPLE_QUERIES[name]["explain"],
+        columns=["SQL", "In plain English", "In Excel"],
+    )

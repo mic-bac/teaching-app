@@ -56,6 +56,9 @@ def test_db_page_shows_backend_and_table():
     assert at.success or at.warning
     # Schema + live sales table are rendered (across the tabs).
     assert len(at.dataframe) >= 1
+    text = " ".join(m.value for m in at.markdown)
+    assert "Why a database, and not one big Excel file?" in text
+    assert "line by line" in text
 
 
 def test_db_page_sql_playground_runs():
@@ -65,6 +68,15 @@ def test_db_page_sql_playground_runs():
     assert run_buttons, "SQL playground run button not found"
     run_buttons[0].click().run()
     assert not at.exception, f"SQL playground raised: {[str(e) for e in at.exception]}"
+
+
+def test_db_page_region_chart_reads_the_numbers():
+    at = _run("pages/1_Database_Basics.py")
+    at.toggle[0].set_value(True).run()
+    assert not at.exception
+    text = " ".join(m.value for m in at.markdown) + " ".join(i.value for i in at.info)
+    # Either a reading of the chart, or the empty-table hint.
+    assert "sold the most" in text or "No sales recorded yet" in text
 
 
 def test_parallel_page_benchmark_runs():
@@ -81,6 +93,9 @@ def test_parallel_page_benchmark_runs():
     assert not at.exception, f"benchmark raised: {[str(e) for e in at.exception]}"
     # After running, the results include per-approach metrics.
     assert len(at.metric) >= 3
+    text = " ".join(m.value for m in at.markdown)
+    assert "Scaled to the real 1,000,000-row file" in text
+    assert "one cashier scans every item" in text and "Phone one pizzeria" in text
 
 
 def test_parallel_page_io_race_runs():
@@ -174,7 +189,7 @@ def test_propensity_page_fits_a_model_at_the_smallest_sample():
     assert any("customers" in c.value and "churned" in c.value for c in at.caption)
     assert not any("Kaggle" in w.value for w in at.warning)
     # Every metric is explained in customers, not just shown as a number.
-    assert any("Question it answers" in d.value.columns for d in at.dataframe)
+    assert any("Question it answers" in d.value.columns for d in at.table)
 
 
 def test_propensity_page_cross_validation_and_tuning_run():
@@ -291,10 +306,19 @@ def test_time_series_page_reproduces_the_slide_and_fits_sarima():
     shown = [(m.label, m.value) for m in at.metric]
     # The lecture's Excel example (slides 70/78), reproduced by the real code.
     assert ("RMSE", "13.60") in shown and ("MSE", "184.89") in shown
+    # No data-source banner; a neutral caption instead.
+    assert not any("Walmart" in w.value for w in at.warning)
+    texts = " ".join(m.value for m in at.markdown)
+    # The explanations: growth arithmetic, what Holt-Winters learned, the misses, the band.
+    assert "growth =" in texts and "**Level**" in texts
+    assert "Easter" in texts and "How far off to expect" in texts
+    assert any("Recommendation" in s.value for s in at.success)
     sarima = next(b for b in at.button if "SARIMA" in b.label)
     sarima.click().run()
     assert not at.exception
     assert "SARIMA MAPE" in [m.label for m in at.metric]
+    at = at.radio(key="miss_model").set_value("Holt-Winters").run()
+    assert not at.exception
 
 
 def test_forecasting_page_runs_every_experiment():
@@ -302,11 +326,17 @@ def test_forecasting_page_runs_every_experiment():
     at.run()
     assert not at.exception
     labels = [m.label for m in at.metric]
-    assert "Prophet MAPE" in labels and "Trees actually used" in labels
+    assert "Prophet MAPE (chain + US holidays)" in labels and "Trees actually used" in labels
     for name in ("department model", "Run the experiment", "Run the comparison", "Holt-Winters model per store"):
         next(b for b in at.button if name in b.label).click().run()
         assert not at.exception, name
     assert "MAPE per department" in [m.label for m in at.metric]
+    # The Easter payoff and the readings: calendar test, worked rows, the verdict in euros.
+    labels = [m.label for m in at.metric]
+    assert any("with Easter in the calendar" in label for label in labels)
+    texts = " ".join(m.value for m in at.markdown)
+    assert "Reading the parts" in texts and "Reading one row" in texts
+    assert "One such row" in texts and "In euros" in texts
 
 
 @pytest.mark.skipif(
@@ -323,3 +353,6 @@ def test_object_detection_threshold_slider_changes_the_boxes():
     assert int(shown()) <= int(loose)
     at.selectbox(key="compare_photo").set_value(at.selectbox(key="compare_photo").options[-1]).run()
     assert not at.exception
+    # The scores and tables come with readings in plain numbers.
+    texts = " ".join(m.value for m in at.markdown)
+    assert "were really spaghetti" in texts and "boxes** at" in texts and "After fine-tuning" in texts

@@ -26,7 +26,7 @@ import concurrent.futures
 import threading
 from multiprocessing import cpu_count
 from utils.compute_utils import fork_pool
-from time import time
+from time import perf_counter  # a stopwatch that never jumps (the wall clock can)
 
 import aiohttp
 import requests
@@ -58,10 +58,10 @@ def run_sequential(sites):
     The baseline: total time is the *sum* of all the network waits, because each
     request blocks the next. Returns ``(bytes_per_site, elapsed_seconds)``.
     """
-    time_start = time()
+    time_start = perf_counter()
     with requests.Session() as session:
         results = [download_site(session, url) for url in sites]
-    elapsed = time() - time_start
+    elapsed = perf_counter() - time_start
     return results, elapsed
 
 
@@ -87,10 +87,10 @@ def run_threaded(sites, max_workers: int = 5):
     Python releases the GIL while a thread waits on I/O, so several downloads are
     in flight at once. Returns ``(bytes_per_site, elapsed_seconds)``.
     """
-    time_start = time()
+    time_start = perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = list(executor.map(_download_on_thread, sites))
-    elapsed = time() - time_start
+    elapsed = perf_counter() - time_start
     return results, elapsed
 
 
@@ -117,13 +117,13 @@ def run_async(sites):
     back to sequential timing if the event loop can't be created. Returns
     ``(bytes_per_site, elapsed_seconds)``.
     """
-    time_start = time()
+    time_start = perf_counter()
     try:
         results = asyncio.run(_download_all_async(sites))
     except Exception:
         # asyncio/aiohttp unavailable or a loop is already running: don't crash.
         return run_sequential(sites)
-    elapsed = time() - time_start
+    elapsed = perf_counter() - time_start
     return results, elapsed
 
 
@@ -149,11 +149,11 @@ def run_multiprocess(sites):
     if multiprocessing is unavailable. Returns ``(bytes_per_site, elapsed_seconds)``.
     """
     try:
-        time_start = time()
+        time_start = perf_counter()
         # fork, explicitly — see compute_utils.fork_pool for why spawn/forkserver hang under Streamlit.
         with fork_pool(initializer=_set_mp_session) as pool:
             results = pool.map(_download_on_process, sites)
-        elapsed = time() - time_start
+        elapsed = perf_counter() - time_start
         return results, elapsed
     except Exception:
         return run_sequential(sites)

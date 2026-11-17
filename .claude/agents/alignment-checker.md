@@ -175,12 +175,17 @@ instead of the lesson.
   re-exported name exists; `prepare(verbose=)` still returns `(chain, stores, depts, source)`;
   `suitability_report` keys used by `pages/7_Time_Series.py` (`cycles`, `trend_p_value`,
   `seasonal_strength`, `strongest_lag`, …) still exist. The app re-implements two INLINE steps of
-  `timeseries.py` — the rolling-origin CV loop (`cross_validate`) and the Christmas check
-  (`christmas_check`, -6 weeks offset, 52-week minimum history) — compare those with the script.
+  `timeseries.py` — the rolling-origin CV loop (`cross_validate`, section 12: seasonal naive,
+  naive × growth, Holt-Winters, SARIMA; weekly % errors as `(actual - forecast) / actual`) and the
+  Christmas check (`christmas_check`, -6 weeks offset, 52-week minimum history) — compare those
+  with the script. `growth_example` re-states `ts_core.seasonal_naive_growth_forecast` step by
+  step; the misses section uses `calendar_events`/`explain_misses`/`easter_weeks` and the band
+  `cv_interval(coverage=0.8)` as section 13/14 of the script do.
   `slide_smoothing_table` must keep reproducing slides 70/78 (MAE 10.20, RMSE 13.60 at α = 0.4).
   Forecasting adds `predictions/src/forecast_panel.py` (`build_features`, `CALENDAR`, `LAGS`,
   `score_panel`, `ets_per_store`). The app composes the script's sections in
-  `forecasting_utils` (`prophet_run`, `chain_tree_models`, `store_panel_run`, `depth_sweep`,
+  `forecasting_utils` (`prophet_run`, `prophet_calendar_cv` — section 5's three calendars ×
+  three folds plus Holt-Winters, `chain_tree_models`, `store_panel_run`, `depth_sweep`,
   `external_features_cv`, `department_grain`, `detrending_experiment`, `control_detrending`) —
   compare feature lists (`PANEL_FEATURES`, `DEPT_FEATURES`, `NO_LAGS`), the depth list
   (2, 4, 6, 10), Prophet's holiday settings and the CO₂ 52-week horizon with `forecasting.py`.

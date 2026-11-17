@@ -27,7 +27,7 @@ import streamlit as st
 from utils import propensity_utils as P
 from utils.teaching import source_of
 
-st.set_page_config(page_title="Propensity Models", layout="wide", page_icon="🔮")
+st.set_page_config(page_title="Propensity Models", layout="wide", page_icon="🎲")
 
 ROOT = Path(__file__).resolve().parents[1]
 SIBLING = ROOT / "predictions"
@@ -99,7 +99,15 @@ def _band(frame: pd.DataFrame, x: str, mean: str, std: str, name: str, color: st
 # ===========================================================================
 # Header + the one control every tab depends on
 # ===========================================================================
-st.title("🔮 Propensity Models — Look-alike Modeling")
+st.title("🎲 Propensity Models — who is about to leave?")
+with st.container(border=True):
+    st.markdown(
+        """
+        💼 **Where you'll use this** — choosing which customers get a retention offer, which leads sales
+        should call first, who receives a campaign (and who would only cost money), or which members of
+        your network are most likely to sign up. Any time budget is limited and people differ.
+        """
+    )
 st.markdown(
     """
     **"Acquiring and keeping customers costs money — who should we talk to?"**
@@ -112,14 +120,6 @@ st.markdown(
     Every tab shows the **real code** that produces the result, not a slide summary.
     """
 )
-with st.container(border=True):
-    st.markdown(
-        """
-        💼 **Where you'll use this** — choosing which customers get a retention offer, which leads sales
-        should call first, who receives a campaign (and who would only cost money), or which members of
-        your network are most likely to sign up. Any time budget is limited and people differ.
-        """
-    )
 
 control, status = st.columns([2, 3])
 with control:
@@ -195,7 +195,7 @@ with tab_overview:
                     "Method": "Behavioural segmentation",
                     "Learning": "Unsupervised clustering",
                     "Answers": "*Why* do groups behave differently?",
-                    "In this app": "Later lesson",
+                    "In this app": "Customer Segmentation page",
                 },
             ]
         )
@@ -325,6 +325,7 @@ with tab_data:
     )
 
     correlations = X.corrwith(y).sort_values()
+    correlations.index = correlations.index.map(P.plain_feature)
     fig_corr = px.bar(
         correlations,
         orientation="h",
@@ -336,6 +337,7 @@ with tab_data:
     )
     fig_corr.update_layout(height=420, showlegend=False, coloraxis_showscale=False)
     st.plotly_chart(fig_corr, width="stretch")
+    st.markdown(P.correlation_reading(correlations))
     st.caption(
         "Correlation only sees straight lines. A tree model will later find effects that "
         "barely show up here — which is exactly why we compare model families."
@@ -390,7 +392,7 @@ with tab_models:
 
     confusion = P.confusion_frame(split["y_test"], fitted["predictions"])
     with st.expander("📖 What the six numbers mean — in customers", expanded=True):
-        st.dataframe(P.metric_guide(fitted["metrics"], confusion), width="stretch", hide_index=True)
+        st.table(P.metric_guide(fitted["metrics"], confusion), hide_index=True)
         majority_share = max(float(split["y_test"].mean()), 1 - float(split["y_test"].mean()))
         st.caption(
             "Accuracy alone is a trap: always predicting the larger group already scores "
@@ -541,7 +543,7 @@ with tab_tuning:
         tune_cols[1].markdown(f"**GridSearchCV** — the whole grid ({total_grid} candidates)")
         st.caption(f"{total_grid} candidates × {tune_cv} folds = **{total_grid * tune_cv} model fits**.")
 
-    st.dataframe(P.parameter_table(tune_name), width="stretch", hide_index=True)
+    st.table(P.parameter_table(tune_name), hide_index=True)
 
     if st.button("🎛️ Search"):
         X_fit = split["X_train"]
@@ -555,9 +557,12 @@ with tab_tuning:
         c1.metric("Best CV ROC-AUC", f"{tuned['best_score']:.4f}")
         c2.metric("Untuned (test)", f"{baseline:.4f}")
         c3.metric("Model fits spent", f"{tuned['n_fits']:,}")
-        st.write("**Best parameters**")
-        st.json(tuned["best_params"])
-        st.dataframe(tuned["results"].head(10), width="stretch", hide_index=True)
+        st.dataframe(
+            P.tuning_table(tuned["results"]).head(10).style.format(
+                {"Average CV ROC-AUC": "{:.4f}", "Spread across folds": "{:.4f}"}),
+            width="stretch", hide_index=True,
+        )
+        st.markdown(P.tuning_reading(tuned["results"]))
         st.caption(
             "The CV score and the test score are different numbers measured on different data — "
             "compare tuned-vs-untuned *within* one column, never across."
@@ -708,10 +713,8 @@ with tab_scores:
         width="stretch",
         hide_index=True,
     )
-    st.caption(
-        "The realised churn rate should climb steeply from Low to High. That climb *is* the "
-        "business value: it says the retention budget can be aimed instead of sprayed."
-    )
+    if "Actual churn rate" in summary.columns:
+        st.markdown(P.segment_climb_reading(summary))
     if data_source == "kaggle":
         st.warning(
             "**A word on this dataset.** The two colours separate almost perfectly — that says more "
@@ -774,18 +777,20 @@ with tab_scores:
         answers the acquisition half of the business question.
         """
     )
-    with st.container(border=True):
-        st.markdown(
-            """
+
+    show_source(P.risk_segments, "🐍 Cutting scores into segments")
+    show_source(P.threshold_sweep, "🐍 Sweeping the decision threshold")
+    show_source(P.feature_importance, "🐍 Feature importance across model families")
+    show_sibling_script("propensity.py", "📄 The full sibling script")
+
+st.divider()
+with st.container(border=True):
+    st.markdown(
+        """
 🎯 **What to remember**
 - **A score per customer beats a yes/no.** It lets you rank people and spend budget where it pays.
 - **Accuracy can lie.** With imbalanced data, look at precision, recall and the confusion matrix —
   and decide which mistake is more expensive for your business.
 - **Test honestly:** respect time (observation → buffer → outcome), split first, and cross-validate.
 """
-        )
-
-    show_source(P.risk_segments, "🐍 Cutting scores into segments")
-    show_source(P.threshold_sweep, "🐍 Sweeping the decision threshold")
-    show_source(P.feature_importance, "🐍 Feature importance across model families")
-    show_sibling_script("propensity.py", "📄 The full sibling script")
+    )

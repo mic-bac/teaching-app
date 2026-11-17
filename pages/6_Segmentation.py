@@ -182,6 +182,14 @@ def cached_stability(k: int, algorithm_names: tuple[str, ...]):
 # Header
 # ===========================================================================
 st.title("🧩 Customer Segmentation — who are our customers, and what are they worth?")
+with st.container(border=True):
+    st.markdown(
+        """
+        💼 **Where you'll use this** — deciding who gets the loyalty programme and who gets a win-back
+        mail, how much you can afford to spend to win a new customer, and writing campaign briefs for
+        groups of real people (*"young families, price-conscious, mostly online"*) instead of averages.
+        """
+    )
 st.markdown(
     """
     *"We know what our customers buy. We do not know how best to talk to them, or which of
@@ -195,14 +203,6 @@ st.markdown(
     `segmentation/` repo, not copied from it.
     """
 )
-with st.container(border=True):
-    st.markdown(
-        """
-        💼 **Where you'll use this** — deciding who gets the loyalty programme and who gets a win-back
-        mail, how much you can afford to spend to win a new customer, and writing campaign briefs for
-        groups of real people (*"young families, price-conscious, mostly online"*) instead of averages.
-        """
-    )
 
 transactions, _tx_source = cached_transactions()
 personality, _personality_source = cached_personality()
@@ -382,7 +382,8 @@ with tab_rfm:
             .round(0)
             .sort_values("Customers", ascending=False)
         )
-        st.dataframe(cube_table, width="stretch")
+        st.table(cube_table.style.format({"Recency": "{:.0f} days", "Frequency": "{:.0f}",
+                                          "Monetary": "€{:,.0f}"}))
 
     with ladder_col:
         st.markdown("**The business ladder** — rules checked top to bottom, first match wins "
@@ -454,11 +455,22 @@ with tab_rfm:
             labels={"Recency": "Recency (days)", "Frequency": "Orders", "Monetary": "Spend (€)"},
         )
     fig_rfm.update_traces(marker=dict(size=3, line=dict(width=0)))
+    if view.startswith("Scores"):
+        # A labelled centre per segment, so the corners read at a glance before anyone rotates the cube.
+        centres = plotted.groupby("Segment")[["R", "F", "M"]].mean().reset_index()
+        fig_rfm.add_trace(go.Scatter3d(
+            x=centres["R"], y=centres["F"], z=centres["M"], mode="markers+text",
+            text=centres["Segment"], textfont=dict(size=14, color="black"),
+            marker=dict(size=9, color="black", symbol="diamond"), name="segment centre",
+        ))
+        axis = dict(range=[0.5, 5.5], dtick=1)
+        fig_rfm.update_layout(scene=dict(xaxis=axis, yaxis=axis, zaxis=axis,
+                                         camera=dict(eye=dict(x=1.6, y=-1.6, z=0.9))))
     fig_rfm.update_layout(height=620, margin=dict(l=0, r=0, t=10, b=0))
     st.plotly_chart(fig_rfm, width="stretch")
     st.caption(
         "Each dot is a customer (a small random wobble is added in the score view, otherwise "
-        "thousands would sit on the same 125 grid points). **Champions** fill the corner where all "
+        "thousands would sit on the same 125 grid points); the black diamonds mark each segment's centre. **Champions** fill the corner where all "
         "three scores are 4–5; **Lost** the opposite corner; **At Risk** sits at medium-to-high F "
         "but low R — they used to order regularly and have stopped. Hover over a dot to see the real numbers."
     )
@@ -560,14 +572,15 @@ with tab_cltv:
         curve_frame, x="Period", y="Retention", color="Cohort",
         labels={"Period": "Months since first purchase", "Retention": "% ordering that month"},
     )
-    fig_curve.update_traces(opacity=0.35)
-    fig_curve.update_traces(selector=dict(name="average"), opacity=1.0,
+    # One thin grey line per cohort (hover tells which) and one bold average — no 25-entry legend.
+    fig_curve.update_traces(line=dict(width=1, color="#b0bec5"), showlegend=False)
+    fig_curve.update_traces(selector=dict(name="average"), showlegend=True, name="average cohort",
                             line=dict(width=4, color="black"))
     fig_curve.update_layout(height=420, margin=dict(l=0, r=0, t=10, b=0))
     st.plotly_chart(fig_curve, width="stretch")
     average_curve = curve_frame[curve_frame["Cohort"] == "average"].set_index("Period")["Retention"]
     st.caption(
-        f"Same numbers as lines; the black line is the average cohort. It drops to about "
+        f"Same numbers as lines: each grey line is one cohort (hover to see which), the black line is the average. It drops to about "
         f"{average_curve.iloc[0]:.0f}% in month 1 and then **flattens** around "
         f"{average_curve.iloc[-6:].mean():.0f}% instead of falling to zero — an early drop-off, "
         "then a loyal core. Monthly numbers look low because most people do not buy gifts every "
@@ -687,9 +700,11 @@ with tab_cltv:
                          labels={"RetentionRate": "Retention rate Rr",
                                  "CustomerEquity": "Customer equity (€)"})
     fig_equity.add_vline(x=measured_rr, line_dash="dash", line_color="green",
-                         annotation_text=f"measured {measured_rr:.1%}")
+                         annotation_text=f"measured {measured_rr:.1%}",
+                         annotation_position="top left")
     fig_equity.add_vline(x=retention_rate, line_dash="dot", line_color="red",
-                         annotation_text="your setting")
+                         annotation_text="your setting",
+                         annotation_position="bottom right")
     fig_equity.update_layout(height=400, margin=dict(l=0, r=0, t=30, b=0))
     st.plotly_chart(fig_equity, width="stretch")
     eq = equity.set_index("RetentionRate")["CustomerEquity"]
@@ -728,9 +743,13 @@ with tab_cltv:
         pd.DataFrame({"CLTV": clv, "Tier": tiers})
         .groupby("Tier", observed=True)["CLTV"].sum() / clv.sum()
     )
+    tier_display = tier_table.rename(columns={
+        "Mean_CLTV": "Average CLTV", "Mean_Revenue": "Average revenue",
+        "Mean_Orders": "Average orders", "Mean_Recency": "Days since last order"})
     st.dataframe(
-        tier_table.style.format({"Share of equity": "{:.1%}", "Mean_CLTV": "€{:,.0f}",
-                                 "Mean_Revenue": "€{:,.0f}"}),
+        tier_display.style.format({"Share of equity": "{:.1%}", "Average CLTV": "€{:,.0f}",
+                                   "Average revenue": "€{:,.0f}", "Average orders": "{:.1f}",
+                                   "Days since last order": "{:.0f}"}),
         width="stretch",
     )
     premium, low = tier_table.iloc[-1], tier_table.iloc[0]
@@ -786,7 +805,6 @@ with tab_cluster:
         """
     )
     sweep = cached_k_sweep()
-    metric_choice = S.choose_k(sweep)
 
     normalised = S.k_sweep_frame(sweep)
     fig_k = go.Figure()
@@ -808,14 +826,16 @@ with tab_cluster:
                   help="The metrics have a favourite. It is not the one we ship — see below.")
     silhouette_by_k = sweep.set_index("k")["silhouette"]
     st.info(
-        f"**Every quality metric prefers k = {metric_choice}.** We use **k = 4** anyway: k = 2 just "
+        f"**{S.metric_favourites(sweep)}** We use **k = 4** anyway: k = 2 just "
         f"splits the base into 'spends a lot' and 'spends little', which RFM already gave us for "
         f"free. Between k = 4, 5 and 6 the silhouette differs by only "
         f"{silhouette_by_k.loc[[4, 5, 6]].max() - silhouette_by_k.loc[[4, 5, 6]].min():.3f} — "
         "the metric cannot tell them apart, so four groups (easy to brief a team on) wins. "
+        f"Be honest about the price: a silhouette of {silhouette_by_k.loc[4]:.2f} at k = 4 means "
+        f"*{S.silhouette_words(silhouette_by_k.loc[4])}* — normal for customers, who form a continuum, not islands. "
         "**The metrics narrow the field; a human picks.**"
     )
-    st.dataframe(sweep.round(3), width="stretch", hide_index=True)
+    st.dataframe(sweep.round(3).rename(columns=S.SCORE_COLUMNS), width="stretch", hide_index=True)
     show_source(S.sweep_k, "Show the code: scoring each k four ways")
 
     st.divider()
@@ -868,13 +888,13 @@ with tab_cluster:
         scores = pd.DataFrame(
             {name: S.score_clustering(X, lab) for name, lab in labels.items()}
         ).T
-        st.dataframe(scores.round(3), width="stretch")
+        st.dataframe(scores.round(3).rename(columns=S.SCORE_COLUMNS), width="stretch")
         best = scores["silhouette"].astype(float).idxmax()
         st.caption(
-            f"`clusters` = number of groups found, `noise` = share left unassigned, "
-            f"`smallest_cluster` = customers in the smallest group; then the three quality scores "
-            f"from above. Read them as a group, not a leaderboard: here **{best}** separates best "
-            f"(silhouette {scores.loc[best, 'silhouette']:.2f}), but always check the sizes first — "
+            f"*Groups found*, the share left *unassigned* and the size of the *smallest group*; then the three quality scores "
+            f"from above. Read them as a group, not a leaderboard: here **{best}** has the highest "
+            f"silhouette ({scores.loc[best, 'silhouette']:.2f} — on the scale above, "
+            f"*{S.silhouette_words(float(scores.loc[best, 'silhouette']))}*), but always check the sizes first — "
             "a high score from a 5-customer cluster is worthless."
         )
         show_source(S.score_clustering, "Show the code: scoring without labels")
@@ -941,11 +961,14 @@ with tab_cluster:
         profiles = S.profile_clusters(customers_attr, labels[primary], S.CLUSTERING_FEATURES)
         fingerprints = S.cluster_fingerprints(customers_attr, profiles, S.CLUSTERING_FEATURES)
 
-        st.dataframe(profiles, width="stretch")
+        profile_view = profiles.rename(index=S.cluster_label, columns=S.plain_attribute)
+        st.dataframe(profile_view.style.format(
+            {c: ("{:,.0f}" if c in ("Income", "Spend over two years", "Customers") else "{:.1f}")
+             for c in profile_view.columns}), width="stretch")
         st.caption("Average of each attribute per cluster. Hard to compare across columns — income "
                    "is in tens of thousands, children in single digits. Hence the heatmap:")
         fig_fingerprint = px.imshow(
-            fingerprints.T, text_auto=True, color_continuous_scale="RdBu_r",
+            fingerprints.rename(index=S.cluster_label, columns=S.plain_attribute).T, text_auto=True, color_continuous_scale="RdBu_r",
             zmin=-2, zmax=2, aspect="auto",
             labels=dict(x="Cluster", y="Feature", color="z-score"),
         )
@@ -957,12 +980,13 @@ with tab_cluster:
             "above average, blue = below**; ±1 or more is a strong difference, near 0 = typical. "
             "Example: +1.7 on spending means this group spends far more than the typical customer."
         )
-        st.markdown(f"**The {primary} clusters in plain words:**")
+        st.markdown(f"**The {primary} clusters in plain words** — with a nickname built from each one's two strongest traits:")
         for cluster in sorted(fingerprints.index):
-            name = "Noise (not in any cluster)" if cluster == -1 else f"Cluster {cluster}"
+            name = "Noise (not in any cluster)" if cluster == -1 else S.cluster_label(cluster)
             count = profiles.loc[cluster, "Customers"]
+            persona = "" if cluster == -1 else f" · *“{S.persona_name(fingerprints.loc[cluster])}”*"
             st.markdown(
-                f"- **{name}** — {count:,} customers ({count / profiles['Customers'].sum():.0%}): "
+                f"- **{name}**{persona} — {count:,} customers ({count / profiles['Customers'].sum():.0%}): "
                 f"{S.describe_cluster(profiles.loc[cluster], fingerprints.loc[cluster], top=4)}."
             )
         st.caption(
@@ -982,8 +1006,8 @@ with tab_compare:
     st.subheader("RFM tells you who is slipping away. CLTV tells you what that costs.")
     st.markdown(
         "Cross the two and you stop having rankings and start having a to-do list. "
-        "The tiers below use the measured retention rate and the lesson's default assumptions "
-        "(`segmentation/src/cltv_core.py`) — not the CLTV-tab sliders — so they match `cltv.py`."
+        "The tiers below use the measured retention rate and the lesson's default assumptions — "
+        "not your slider settings on the CLTV tab — so the numbers stay the same whatever you tried there."
     )
 
     scored = cached_rfm()
@@ -1094,13 +1118,15 @@ with tab_compare:
         Three methods, three questions, three data requirements. That is the lesson.
         """
     )
-    with st.container(border=True):
-        st.markdown(
-            """
+
+st.divider()
+with st.container(border=True):
+    st.markdown(
+        """
 🎯 **What to remember**
 - **RFM is quick and cheap** — three numbers from your sales data already sort customers usefully.
 - **CLTV turns segments into euros** — and retention is the number that moves it most, so measure it.
 - **Clustering tells you *who* people are** — but only with the right data, and only if the groups
   are stable *and* clearly separated.
 """
-        )
+    )

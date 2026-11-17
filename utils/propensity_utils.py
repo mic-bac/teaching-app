@@ -29,6 +29,8 @@ says so — the lesson always runs.
 
 from __future__ import annotations
 
+import ast
+
 from pathlib import Path
 
 import numpy as np
@@ -58,6 +60,8 @@ from sklearn.model_selection import (
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+
+from utils.teaching import plain_feature
 
 # Default location of the sibling repo's dataset (read-only).
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / "predictions" / "data" / "churn"
@@ -803,6 +807,63 @@ def threshold_reading(sweep: pd.DataFrame) -> str:
         "about the same, sit there. If losing a customer costs much more than an offer, move "
         "**left**; if offers are expensive, move **right**."
     )
+
+
+def correlation_reading(correlations: pd.Series) -> str:
+    """The strongest pull towards and away from churn, in words with the numbers."""
+    up, down = correlations.idxmax(), correlations.idxmin()
+    weak = correlations.abs().sort_values().index[0]
+    return (f"**Reading:** the bar furthest right, **{plain_feature(up)}** ({correlations[up]:+.2f}), goes "
+            f"most with churn — the more of it, the more customers leave. The bar furthest left, "
+            f"**{plain_feature(down)}** ({correlations[down]:+.2f}), goes with staying. "
+            f"**{plain_feature(weak)}** ({correlations[weak]:+.2f}) looks irrelevant — but that only means "
+            "*no straight-line link*; a tree model may still find it matters. "
+            "Rule of thumb: below ±0.1 is weak, above ±0.3 is strong.")
+
+
+def segment_climb_reading(summary: pd.DataFrame) -> str:
+    """Does realised churn really climb from Low to High risk — and where is the big step?"""
+    rates = summary.set_index("Segment")["Actual churn rate"].astype(float)
+    low, medium, high = (rates[f"{s} risk"] for s in ("Low", "Medium", "High"))
+    text = (f"**Reading:** of the customers the model called *low risk*, **{low:.0%}** really left; "
+            f"*medium risk* **{medium:.0%}**, *high risk* **{high:.0%}**. ")
+    if high - medium < 0.10:
+        text += ("Medium and High are almost the same: the score separates *safe* from *at risk* very "
+                 "well, but a third tier adds little — the money is in the cut between Low and Medium.")
+    else:
+        text += "Every step up is a real step, so each tier deserves its own treatment."
+    return text + " That climb *is* the business value: the retention budget can be aimed instead of sprayed."
+
+
+def _setting_text(params) -> str:
+    """``{'C': 0.1}`` (a dict, or its string form as stored in the results) → ``C = 0.1``."""
+    if isinstance(params, str):
+        params = ast.literal_eval(params)
+    return ", ".join(f"{k} = {v}" for k, v in params.items())
+
+
+def tuning_table(results: pd.DataFrame) -> pd.DataFrame:
+    """The search results in plain columns: ``{'C': 0.1}`` → ``C = 0.1``, scores named in words."""
+    return pd.DataFrame({
+        "Rank": results["rank_test_score"].astype(int),
+        "Setting tried": results["params"].map(_setting_text),
+        "Average CV ROC-AUC": results["mean_test_score"],
+        "Spread across folds": results["std_test_score"],
+    }).sort_values("Rank")
+
+
+def tuning_reading(results: pd.DataFrame) -> str:
+    """Did tuning matter? Compare the gap between settings with the noise between folds."""
+    scores = results["mean_test_score"]
+    setting = _setting_text(results.loc[scores.idxmax(), "params"])
+    gap, noise = float(scores.max() - scores.min()), float(results["std_test_score"].mean())
+    text = (f"**Reading:** the best setting, **{setting}**, scores {scores.max():.4f}; the worst of the "
+            f"{len(results)} tried scores {scores.min():.4f} — a gap of {gap:.4f}. ")
+    if gap < noise:
+        return text + (f"That is smaller than the normal wobble between folds ({noise:.4f}), so on this data "
+                       "**tuning hardly matters** — the default would do. Knowing that saves compute.")
+    return text + (f"That is larger than the wobble between folds ({noise:.4f}), so the setting **does matter** "
+                   "here — tuning paid for its model fits.")
 
 
 def segment_summary(segments: pd.DataFrame) -> pd.DataFrame:
